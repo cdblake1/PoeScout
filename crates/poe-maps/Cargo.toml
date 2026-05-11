@@ -1,0 +1,9 @@
+[package]
+name = "poe-maps"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+poe-core = { path = "../poe-core" }
+serde.workspace = true
+tokio.workspace = true

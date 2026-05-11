@@ -1,0 +1,12 @@
+[package]
+name = "poe-pob"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+poe-core = { path = "../poe-core" }
+serde.workspace = true
+serde_json.workspace = true
+base64 = "0.22"
+flate2 = "1"
+quick-xml = { version = "0.37", features = ["serialize"] }

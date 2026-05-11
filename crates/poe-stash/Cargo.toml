@@ -1,0 +1,10 @@
+[package]
+name = "poe-stash"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+poe-core = { path = "../poe-core" }
+serde.workspace = true
+tokio.workspace = true
+reqwest.workspace = true

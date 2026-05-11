@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/poe-core",
+    "crates/poe-data",
+    "crates/poe-pricing",
+    "crates/poe-stash",
+    "crates/poe-maps",
+    "crates/poe-pob",
+    "src-tauri",
+]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rusqlite = { version = "0.32", features = ["bundled", "vtab"] }
+reqwest = { version = "0.12", features = ["json"] }
