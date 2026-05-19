@@ -46,6 +46,7 @@ pub fn ingest_mods(db: &Database, data_dir: &Path) -> Result<()> {
             generation_type: raw.generation_type.unwrap_or_default(),
             group: raw.groups.as_ref().and_then(|g| g.first().cloned()).unwrap_or_default(),
             required_level: raw.required_level.unwrap_or(0),
+            text: raw.text.unwrap_or_default(),
             stats: raw.stats.unwrap_or_default().into_iter().map(|s| ModStat {
                 id: s.id.unwrap_or_default(),
                 min: s.min.unwrap_or(0),
@@ -55,8 +56,9 @@ pub fn ingest_mods(db: &Database, data_dir: &Path) -> Result<()> {
                 tag: sw.tag.unwrap_or_default(),
                 weight: sw.weight.unwrap_or(0),
             }).collect(),
-            tags: raw.tags.unwrap_or_default(),
+            tags: raw.implicit_tags.unwrap_or_default(),
             is_essence_only: raw.is_essence_only.unwrap_or(false),
+            mod_type: raw.mod_type.unwrap_or_default(),
         })
         .collect();
 
@@ -94,6 +96,7 @@ pub fn ingest_base_items(db: &Database, data_dir: &Path) -> Result<()> {
                 tags: raw.tags.unwrap_or_default(),
                 implicits: raw.implicits.unwrap_or_default(),
                 implicit_stats: vec![],
+                implicit_text: vec![],
                 properties: BaseItemProperties {
                     armour_min: raw.properties.as_ref().and_then(|p| p.armour.as_ref().and_then(|v| v.min)),
                     armour_max: raw.properties.as_ref().and_then(|p| p.armour.as_ref().and_then(|v| v.max)),
@@ -135,8 +138,12 @@ struct RawMod {
     stats: Option<Vec<RawModStat>>,
     spawn_weights: Option<Vec<RawSpawnWeight>>,
     #[serde(default)]
-    tags: Option<Vec<String>>,
+    implicit_tags: Option<Vec<String>>,
     is_essence_only: Option<bool>,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default, rename = "type")]
+    mod_type: Option<String>,
 }
 
 #[derive(serde::Deserialize)]

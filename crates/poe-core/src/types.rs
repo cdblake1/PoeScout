@@ -8,10 +8,12 @@ pub struct Mod {
     pub generation_type: String,
     pub group: String,
     pub required_level: i32,
+    pub text: String,
     pub stats: Vec<ModStat>,
     pub spawn_weights: Vec<SpawnWeight>,
     pub tags: Vec<String>,
     pub is_essence_only: bool,
+    pub mod_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +38,7 @@ pub struct BaseItem {
     pub tags: Vec<String>,
     pub implicits: Vec<String>,
     pub implicit_stats: Vec<ImplicitStat>,
+    pub implicit_text: Vec<String>,
     pub properties: BaseItemProperties,
     pub requirements: BaseItemRequirements,
     pub image_url: Option<String>,

@@ -5,7 +5,10 @@ CREATE TABLE IF NOT EXISTS mods (
     generation_type TEXT NOT NULL,
     grp TEXT NOT NULL DEFAULT '',
     required_level INTEGER NOT NULL DEFAULT 0,
-    is_essence_only INTEGER NOT NULL DEFAULT 0
+    is_essence_only INTEGER NOT NULL DEFAULT 0,
+    implicit_tags TEXT NOT NULL DEFAULT '[]',
+    text TEXT NOT NULL DEFAULT '',
+    mod_type TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS mod_stats (
@@ -21,6 +24,7 @@ CREATE TABLE IF NOT EXISTS mod_spawn_weights (
     mod_id TEXT NOT NULL,
     tag TEXT NOT NULL,
     weight INTEGER NOT NULL DEFAULT 0,
+    position INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (mod_id, tag),
     FOREIGN KEY (mod_id) REFERENCES mods(id)
 );

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 DATA_DIR="${1:-data}"
-BASE_URL="https://raw.githubusercontent.com/brather1ng/RePoE/master/RePoE/data"
+BASE_URL="https://repoe-fork.github.io"
 
 FILES=(
   "mods.json"

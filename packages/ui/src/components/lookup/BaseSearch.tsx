@@ -9,16 +9,6 @@ import {
 } from "../../lib/tauri";
 import { formatMs } from "../../lib/format";
 import BaseDetail from "./BaseDetail";
-import type { ImplicitStat } from "../../lib/tauri";
-
-function formatImplicit(s: ImplicitStat): string {
-  const label = s.stat_id
-    .replace(/_/g, " ")
-    .replace(/base /i, "")
-    .replace(/ ?%$/, "%");
-  if (s.min === s.max) return `+${s.min} ${label}`;
-  return `+(${s.min}–${s.max}) ${label}`;
-}
 
 // Attribute tag → display info
 const ATTRIBUTE_GROUPS: Record<string, { label: string; color: string }> = {
@@ -359,11 +349,11 @@ const BaseCard: Component<{ item: BaseItem; onClick?: (item: BaseItem) => void }
       </div>
 
       {/* Implicits */}
-      <Show when={props.item.implicit_stats.length > 0}>
+      <Show when={props.item.implicit_text.filter(t => t).length > 0}>
         <div class="text-[10px] text-center w-full">
-          <For each={props.item.implicit_stats}>
-            {(s) => (
-              <div class="text-blue-300 italic">{formatImplicit(s)}</div>
+          <For each={props.item.implicit_text.filter(t => t)}>
+            {(text) => (
+              <div class="text-blue-300 italic">{text}</div>
             )}
           </For>
         </div>
