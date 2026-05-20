@@ -12,6 +12,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             let data_dir = app
                 .path()
@@ -37,6 +38,9 @@ pub fn run() {
             commands::pob::decode_pob_code,
             commands::pob::detect_pob,
             commands::pob::launch_pob_app,
+            commands::capture::capture_item_text,
+            commands::capture::get_poe_window_rect,
+            commands::capture::focus_poe_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PoeScout");
