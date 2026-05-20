@@ -1,4 +1,4 @@
-import { Component, createSignal, createResource, For, Show, onMount } from "solid-js";
+import { Component, createSignal, createResource, createEffect, For, Show, onMount } from "solid-js";
 import {
   searchBases,
   listItemClasses,
@@ -8,17 +8,8 @@ import {
   type BaseSearchResult,
 } from "../../lib/tauri";
 import { formatMs } from "../../lib/format";
+import { navigateToBase, setNavigateToBase, capturedItemLevel, setCapturedItemLevel } from "../../lib/navigation";
 import BaseDetail from "./BaseDetail";
-import type { ImplicitStat } from "../../lib/tauri";
-
-function formatImplicit(s: ImplicitStat): string {
-  const label = s.stat_id
-    .replace(/_/g, " ")
-    .replace(/base /i, "")
-    .replace(/ ?%$/, "%");
-  if (s.min === s.max) return `+${s.min} ${label}`;
-  return `+(${s.min}–${s.max}) ${label}`;
-}
 
 // Attribute tag → display info
 const ATTRIBUTE_GROUPS: Record<string, { label: string; color: string }> = {
@@ -74,7 +65,18 @@ const BaseSearch: Component = () => {
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal("");
   const [selectedItem, setSelectedItem] = createSignal<BaseItem | null>(null);
+  const [initialItemLevel, setInitialItemLevel] = createSignal<number | null>(null);
   const [classes] = createResource(listItemClasses);
+
+  createEffect(() => {
+    const target = navigateToBase();
+    if (target) {
+      setInitialItemLevel(capturedItemLevel());
+      setCapturedItemLevel(null);
+      setSelectedItem(target);
+      setNavigateToBase(null);
+    }
+  });
 
   let debounceTimer: number | undefined;
 
@@ -147,7 +149,8 @@ const BaseSearch: Component = () => {
       fallback={
         <BaseDetail
           item={selectedItem()!}
-          onBack={() => setSelectedItem(null)}
+          initialItemLevel={initialItemLevel()}
+          onBack={() => { const item = selectedItem()!; setSelectedItem(null); setInitialItemLevel(null); selectClass(item.item_class); }}
         />
       }
     >
@@ -359,11 +362,11 @@ const BaseCard: Component<{ item: BaseItem; onClick?: (item: BaseItem) => void }
       </div>
 
       {/* Implicits */}
-      <Show when={props.item.implicit_stats.length > 0}>
+      <Show when={props.item.implicit_text.filter(t => t).length > 0}>
         <div class="text-[10px] text-center w-full">
-          <For each={props.item.implicit_stats}>
-            {(s) => (
-              <div class="text-blue-300 italic">{formatImplicit(s)}</div>
+          <For each={props.item.implicit_text.filter(t => t)}>
+            {(text) => (
+              <div class="text-blue-300 italic">{text}</div>
             )}
           </For>
         </div>

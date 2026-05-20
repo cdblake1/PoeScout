@@ -12,11 +12,26 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "PoeScout",
         "width": 1200,
         "height": 800,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "transparent": true,
+        "decorations": true
+      },
+      {
+        "label": "overlay",
+        "title": "PoeScout Overlay",
+        "width": 560,
+        "height": 720,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "visible": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
       }
     ],
     "security": {

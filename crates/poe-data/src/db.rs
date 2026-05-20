@@ -14,6 +14,7 @@ fn parse_base_item_row(row: &rusqlite::Row) -> rusqlite::Result<BaseItem> {
         tags: serde_json::from_str(&tags_str).unwrap_or_default(),
         implicits: serde_json::from_str(&implicits_str).unwrap_or_default(),
         implicit_stats: vec![],
+        implicit_text: vec![],
         image_url: row.get(6)?,
         inventory_width: row.get(7)?,
         inventory_height: row.get(8)?,
@@ -69,9 +70,9 @@ impl Database {
     pub fn insert_mod(&self, m: &Mod) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR REPLACE INTO mods (id, name, domain, generation_type, grp, required_level, is_essence_only)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![m.id, m.name, m.domain, m.generation_type, m.group, m.required_level, m.is_essence_only],
+            "INSERT OR REPLACE INTO mods (id, name, domain, generation_type, grp, required_level, is_essence_only, implicit_tags, text, mod_type)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![m.id, m.name, m.domain, m.generation_type, m.group, m.required_level, m.is_essence_only, serde_json::to_string(&m.tags).unwrap_or_default(), m.text, m.mod_type],
         )?;
 
         // Stats
@@ -83,10 +84,10 @@ impl Database {
         }
 
         // Spawn weights
-        for sw in &m.spawn_weights {
+        for (i, sw) in m.spawn_weights.iter().enumerate() {
             conn.execute(
-                "INSERT OR REPLACE INTO mod_spawn_weights (mod_id, tag, weight) VALUES (?1, ?2, ?3)",
-                params![m.id, sw.tag, sw.weight],
+                "INSERT OR REPLACE INTO mod_spawn_weights (mod_id, tag, weight, position) VALUES (?1, ?2, ?3, ?4)",
+                params![m.id, sw.tag, sw.weight, i as i32],
             )?;
         }
 
@@ -155,6 +156,9 @@ impl Database {
         let mut stmt = conn.prepare_cached(
             "SELECT stat_id, min_val, max_val FROM mod_stats WHERE mod_id = ?1"
         )?;
+        let mut text_stmt = conn.prepare_cached(
+            "SELECT text FROM mods WHERE id = ?1"
+        )?;
         for item in items.iter_mut() {
             for mod_id in &item.implicits {
                 let stats: Vec<ImplicitStat> = stmt
@@ -167,6 +171,13 @@ impl Database {
                     })?
                     .collect::<rusqlite::Result<_>>()?;
                 item.implicit_stats.extend(stats);
+
+                let text: String = text_stmt
+                    .query_row(params![mod_id], |row| row.get(0))
+                    .unwrap_or_default();
+                if !text.is_empty() {
+                    item.implicit_text.push(text);
+                }
             }
         }
         Ok(())
@@ -178,23 +189,23 @@ impl Database {
 
         {
             let mut stmt_mod = tx.prepare_cached(
-                "INSERT OR REPLACE INTO mods (id, name, domain, generation_type, grp, required_level, is_essence_only)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+                "INSERT OR REPLACE INTO mods (id, name, domain, generation_type, grp, required_level, is_essence_only, implicit_tags, text, mod_type)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
             )?;
             let mut stmt_stat = tx.prepare_cached(
                 "INSERT OR REPLACE INTO mod_stats (mod_id, stat_id, min_val, max_val) VALUES (?1, ?2, ?3, ?4)"
             )?;
             let mut stmt_sw = tx.prepare_cached(
-                "INSERT OR REPLACE INTO mod_spawn_weights (mod_id, tag, weight) VALUES (?1, ?2, ?3)"
+                "INSERT OR REPLACE INTO mod_spawn_weights (mod_id, tag, weight, position) VALUES (?1, ?2, ?3, ?4)"
             )?;
 
             for m in mods {
-                stmt_mod.execute(params![m.id, m.name, m.domain, m.generation_type, m.group, m.required_level, m.is_essence_only])?;
+                stmt_mod.execute(params![m.id, m.name, m.domain, m.generation_type, m.group, m.required_level, m.is_essence_only, serde_json::to_string(&m.tags).unwrap_or_default(), m.text, m.mod_type])?;
                 for stat in &m.stats {
                     stmt_stat.execute(params![m.id, stat.id, stat.min, stat.max])?;
                 }
-                for sw in &m.spawn_weights {
-                    stmt_sw.execute(params![m.id, sw.tag, sw.weight])?;
+                for (i, sw) in m.spawn_weights.iter().enumerate() {
+                    stmt_sw.execute(params![m.id, sw.tag, sw.weight, i as i32])?;
                 }
             }
         }
@@ -260,10 +271,10 @@ impl Database {
     pub fn load_all_mods(&self) -> Result<Vec<Mod>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, domain, generation_type, grp, required_level, is_essence_only FROM mods"
+            "SELECT id, name, domain, generation_type, grp, required_level, is_essence_only, text, mod_type FROM mods"
         )?;
 
-        let mod_rows: Vec<(String, String, String, String, String, i32, bool)> = stmt
+        let mod_rows: Vec<(String, String, String, String, String, i32, bool, String, String)> = stmt
             .query_map([], |row| {
                 Ok((
                     row.get(0)?,
@@ -273,12 +284,14 @@ impl Database {
                     row.get(4)?,
                     row.get(5)?,
                     row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
                 ))
             })?
             .collect::<rusqlite::Result<_>>()?;
 
         let mut mods = Vec::with_capacity(mod_rows.len());
-        for (id, name, domain, gen_type, group, req_level, essence_only) in mod_rows {
+        for (id, name, domain, gen_type, group, req_level, essence_only, text, mod_type) in mod_rows {
             let stats = self.load_mod_stats_inner(&conn, &id)?;
             let spawn_weights = self.load_spawn_weights_inner(&conn, &id)?;
             let tags = self.load_mod_tags_inner(&conn, &id)?;
@@ -290,10 +303,12 @@ impl Database {
                 generation_type: gen_type,
                 group,
                 required_level: req_level,
+                text,
                 stats,
                 spawn_weights,
                 tags,
                 is_essence_only: essence_only,
+                mod_type,
             });
         }
 
@@ -343,7 +358,7 @@ impl Database {
         let limit = query.limit.unwrap_or(50);
 
         let mut sql = String::from(
-            "SELECT m.id, m.name, m.domain, m.generation_type, m.grp, m.required_level, m.is_essence_only
+            "SELECT m.id, m.name, m.domain, m.generation_type, m.grp, m.required_level, m.is_essence_only, m.text, m.mod_type
              FROM mods m"
         );
         let mut conditions = Vec::new();
@@ -385,7 +400,7 @@ impl Database {
 
         let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql)?;
-        let mod_rows: Vec<(String, String, String, String, String, i32, bool)> = stmt
+        let mod_rows: Vec<(String, String, String, String, String, i32, bool, String, String)> = stmt
             .query_map(params_refs.as_slice(), |row| {
                 Ok((
                     row.get(0)?,
@@ -395,13 +410,15 @@ impl Database {
                     row.get(4)?,
                     row.get(5)?,
                     row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
                 ))
             })?
             .collect::<rusqlite::Result<_>>()?;
 
         let total = mod_rows.len();
         let mut mods = Vec::with_capacity(total);
-        for (id, name, domain, gen_type, group, req_level, essence_only) in mod_rows {
+        for (id, name, domain, gen_type, group, req_level, essence_only, text, mod_type) in mod_rows {
             let stats = self.load_mod_stats_inner(&conn, &id)?;
             let spawn_weights = self.load_spawn_weights_inner(&conn, &id)?;
             mods.push(Mod {
@@ -411,10 +428,12 @@ impl Database {
                 generation_type: gen_type,
                 group,
                 required_level: req_level,
+                text,
                 stats,
                 spawn_weights,
                 tags: vec![],
                 is_essence_only: essence_only,
+                mod_type,
             });
         }
 
@@ -471,6 +490,29 @@ impl Database {
         Ok(BaseSearchResult { items, total, query_ms })
     }
 
+    /// Equipment-type tags that have influence variants in spawn_weights.
+    const EQUIPMENT_TAGS: &'static [&'static str] = &[
+        "2h_axe", "2h_mace", "2h_sword", "amulet", "axe", "belt",
+        "body_armour", "boots", "bow", "claw", "dagger", "gloves",
+        "helmet", "mace", "quiver", "ring", "rune_dagger", "sceptre",
+        "shield", "staff", "sword", "wand", "warstaff",
+    ];
+
+    /// Influence suffixes: (tag_suffix, source_label)
+    const INFLUENCE_SUFFIXES: &'static [(&'static str, &'static str)] = &[
+        ("shaper", "shaper"),
+        ("elder", "elder"),
+        ("crusader", "crusader"),
+        ("adjudicator", "warlord"),   // Warlord internally = adjudicator
+        ("basilisk", "hunter"),       // Hunter internally = basilisk
+        ("eyrie", "redeemer"),        // Redeemer internally = eyrie
+    ];
+
+    /// Domains that contain equipment-craftable mods.
+    const AFFIX_DOMAINS: &'static [&'static str] = &[
+        "item", "crafted", "delve", "unveiled", "veiled",
+    ];
+
     pub fn get_affixes_for_base(&self, base_tags: &[String]) -> Result<AffixesForBaseResult> {
         let start = Instant::now();
         let conn = self.conn.lock().unwrap();
@@ -479,45 +521,72 @@ impl Database {
             return Ok(AffixesForBaseResult { affixes: vec![], query_ms: 0.0 });
         }
 
-        // Build placeholders for IN clause
-        let placeholders: Vec<String> = (1..=base_tags.len()).map(|i| format!("?{}", i)).collect();
-        let in_clause = placeholders.join(", ");
+        // Start with the base item's own tags
+        let mut all_tags: Vec<String> = base_tags.to_vec();
 
-        // Find all mods where any spawn_weight tag matches a base tag with weight > 0
+        // Generate influence-variant tags: for each equipment tag the base has,
+        // add {equipment_tag}_{influence_suffix} for all 6 influences
+        for tag in base_tags {
+            if Self::EQUIPMENT_TAGS.contains(&tag.as_str()) {
+                for (suffix, _label) in Self::INFLUENCE_SUFFIXES {
+                    all_tags.push(format!("{}_{}", tag, suffix));
+                }
+            }
+        }
+
+        // Build placeholders for tags
+        let tag_count = all_tags.len();
+        let tag_placeholders: Vec<String> = (1..=tag_count).map(|i| format!("?{}", i)).collect();
+        let tag_in_clause = tag_placeholders.join(", ");
+
+        // Build domain IN clause
+        let domain_start = tag_count + 1;
+        let domain_placeholders: Vec<String> = (0..Self::AFFIX_DOMAINS.len())
+            .map(|i| format!("?{}", domain_start + i))
+            .collect();
+        let domain_in_clause = domain_placeholders.join(", ");
+
         let sql = format!(
             "SELECT m.id, m.name, m.domain, m.generation_type, m.grp, m.required_level, m.is_essence_only,
-                    MAX(sw.weight) as effective_weight
+                    m.implicit_tags, sw.weight as effective_weight, m.text, m.mod_type
              FROM mods m
              JOIN mod_spawn_weights sw ON sw.mod_id = m.id
-             WHERE sw.tag IN ({in_clause})
+             WHERE sw.tag IN ({tag_in_clause})
+               AND sw.position = (
+                 SELECT MIN(sw2.position) FROM mod_spawn_weights sw2
+                 WHERE sw2.mod_id = m.id AND sw2.tag IN ({tag_in_clause})
+               )
                AND sw.weight > 0
-               AND m.domain IN ('item', 'crafted', 'unveiled', 'veiled', 'delve')
-               AND m.generation_type IN ('prefix', 'suffix')
-             GROUP BY m.id
+               AND m.domain IN ({domain_in_clause})
              ORDER BY m.generation_type, m.grp, m.required_level DESC"
         );
 
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-        for tag in base_tags {
+        for tag in &all_tags {
             params.push(Box::new(tag.clone()));
+        }
+        for domain in Self::AFFIX_DOMAINS {
+            params.push(Box::new(domain.to_string()));
         }
 
         let params_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql)?;
 
-        let rows: Vec<(String, String, String, String, String, i32, bool, i32)> = stmt
+        let rows: Vec<(String, String, String, String, String, i32, bool, String, i32, String, String)> = stmt
             .query_map(params_refs.as_slice(), |row| {
                 Ok((
                     row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?,
                     row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?,
+                    row.get(8)?, row.get(9)?, row.get(10)?,
                 ))
             })?
             .collect::<rusqlite::Result<_>>()?;
 
         let mut affixes = Vec::with_capacity(rows.len());
-        for (id, name, domain, gen_type, group, req_level, essence_only, eff_weight) in rows {
+        for (id, name, domain, gen_type, group, req_level, essence_only, implicit_tags_json, eff_weight, text, mod_type) in rows {
             let stats = self.load_mod_stats_inner(&conn, &id)?;
             let spawn_weights = self.load_spawn_weights_inner(&conn, &id)?;
+            let tags: Vec<String> = serde_json::from_str(&implicit_tags_json).unwrap_or_default();
             affixes.push(AffixEntry {
                 mod_data: Mod {
                     id,
@@ -526,10 +595,12 @@ impl Database {
                     generation_type: gen_type,
                     group,
                     required_level: req_level,
+                    text,
                     stats,
                     spawn_weights,
-                    tags: vec![],
+                    tags,
                     is_essence_only: essence_only,
+                    mod_type,
                 },
                 effective_weight: eff_weight,
             });

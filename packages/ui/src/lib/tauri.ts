@@ -18,10 +18,12 @@ export interface Mod {
   generation_type: string;
   group: string;
   required_level: number;
+  text: string;
   stats: ModStat[];
   spawn_weights: SpawnWeight[];
   tags: string[];
   is_essence_only: boolean;
+  mod_type: string;
 }
 
 export interface SearchQuery {
@@ -73,6 +75,7 @@ export interface BaseItem {
   tags: string[];
   implicits: string[];
   implicit_stats: ImplicitStat[];
+  implicit_text: string[];
   properties: BaseItemProperties;
   requirements: BaseItemRequirements;
   image_url: string | null;
