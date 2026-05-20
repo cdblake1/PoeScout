@@ -1,4 +1,4 @@
-import { Component, createSignal, createResource, For, Show, onMount } from "solid-js";
+import { Component, createSignal, createResource, createEffect, For, Show, onMount } from "solid-js";
 import {
   searchBases,
   listItemClasses,
@@ -8,6 +8,7 @@ import {
   type BaseSearchResult,
 } from "../../lib/tauri";
 import { formatMs } from "../../lib/format";
+import { navigateToBase, setNavigateToBase, capturedItemLevel, setCapturedItemLevel } from "../../lib/navigation";
 import BaseDetail from "./BaseDetail";
 
 // Attribute tag → display info
@@ -64,7 +65,18 @@ const BaseSearch: Component = () => {
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal("");
   const [selectedItem, setSelectedItem] = createSignal<BaseItem | null>(null);
+  const [initialItemLevel, setInitialItemLevel] = createSignal<number | null>(null);
   const [classes] = createResource(listItemClasses);
+
+  createEffect(() => {
+    const target = navigateToBase();
+    if (target) {
+      setInitialItemLevel(capturedItemLevel());
+      setCapturedItemLevel(null);
+      setSelectedItem(target);
+      setNavigateToBase(null);
+    }
+  });
 
   let debounceTimer: number | undefined;
 
@@ -137,7 +149,8 @@ const BaseSearch: Component = () => {
       fallback={
         <BaseDetail
           item={selectedItem()!}
-          onBack={() => setSelectedItem(null)}
+          initialItemLevel={initialItemLevel()}
+          onBack={() => { const item = selectedItem()!; setSelectedItem(null); setInitialItemLevel(null); selectClass(item.item_class); }}
         />
       }
     >

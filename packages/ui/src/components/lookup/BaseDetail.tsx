@@ -1,4 +1,4 @@
-import { Component, createSignal, createResource, For, Show } from "solid-js";
+import { Component, createSignal, createEffect, createResource, For, Show } from "solid-js";
 import {
   getAffixesForBase,
   type BaseItem,
@@ -204,9 +204,13 @@ function blockedModCategories(item: BaseItem): string[] {
 
 const BaseDetail: Component<{
   item: BaseItem;
+  initialItemLevel?: number | null;
   onBack: () => void;
 }> = (props) => {
-  const [itemLevel, setItemLevel] = createSignal(84);
+  const [itemLevel, setItemLevel] = createSignal(props.initialItemLevel ?? 84);
+  createEffect(() => {
+    if (props.initialItemLevel != null) setItemLevel(props.initialItemLevel);
+  });
   const blocked = () => blockedModCategories(props.item);
   const DEFAULT_HIDDEN_TAGS = new Set([
     "resource", "physical_damage", "flat_life_regen",

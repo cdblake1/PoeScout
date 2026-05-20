@@ -5,7 +5,7 @@ import {
   type SearchQuery,
   type SearchResult,
 } from "../../lib/tauri";
-import { formatMs, formatStatRange, generationLabel, generationColor } from "../../lib/format";
+import { formatMs, generationLabel, generationColor } from "../../lib/format";
 
 const ModSearch: Component = () => {
   const [query, setQuery] = createSignal("");
@@ -146,14 +146,8 @@ const ModRow: Component<{ mod: Mod }> = (props) => {
         {generationLabel(props.mod.generation_type)}
       </td>
       <td class="px-2 py-1 text-poe-text">{props.mod.name}</td>
-      <td class="px-2 py-1">
-        <For each={props.mod.stats}>
-          {(stat) => (
-            <div class="text-poe-accent text-xs">
-              {stat.id}: {formatStatRange(stat.min, stat.max)}
-            </div>
-          )}
-        </For>
+      <td class="px-2 py-1 text-poe-accent text-xs whitespace-pre-line">
+        {props.mod.text || props.mod.id}
       </td>
       <td class="px-2 py-1 text-poe-muted">{props.mod.required_level}</td>
       <td class="px-2 py-1">
