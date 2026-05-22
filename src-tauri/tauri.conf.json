@@ -26,10 +26,22 @@
         "title": "PoeScout Overlay",
         "width": 560,
         "height": 720,
-        "resizable": false,
+        "resizable": true,
         "decorations": false,
         "transparent": true,
         "visible": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
+      },
+      {
+        "label": "timer",
+        "title": "PoeScout Timer",
+        "width": 280,
+        "height": 36,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "visible": true,
         "alwaysOnTop": true,
         "skipTaskbar": true
       }

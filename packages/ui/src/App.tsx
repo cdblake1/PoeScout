@@ -2,6 +2,7 @@ import { Component, createSignal, onMount, onCleanup, Show } from "solid-js";
 import ModSearch from "./components/lookup/ModSearch";
 import BaseSearch from "./components/lookup/BaseSearch";
 import PobPanel from "./components/pob/PobPanel";
+import MapTimer from "./components/maps/MapTimer";
 import KeybindsPanel from "./components/KeybindsPanel";
 import { initOverlayShortcut, cleanupOverlayShortcut, toggleOverlay } from "./lib/overlay";
 import { activeTab, setActiveTab } from "./lib/navigation";
@@ -48,6 +49,12 @@ const App: Component = () => {
           >
             PoB
           </button>
+          <button
+            class={`px-3 py-1 text-sm rounded ${activeTab() === "maps" ? "bg-poe-accent text-poe-bg" : "text-poe-muted hover:text-poe-text"}`}
+            onClick={() => setActiveTab("maps")}
+          >
+            Maps
+          </button>
         </nav>
         <div class="ml-auto flex gap-2">
           <button
@@ -67,7 +74,7 @@ const App: Component = () => {
       </header>
 
       <main class="p-4">
-        {activeTab() === "mods" ? <ModSearch /> : activeTab() === "bases" ? <BaseSearch /> : <PobPanel />}
+        {activeTab() === "mods" ? <ModSearch /> : activeTab() === "bases" ? <BaseSearch /> : activeTab() === "pob" ? <PobPanel /> : <MapTimer />}
       </main>
 
       <Show when={showKeybinds()}>

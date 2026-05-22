@@ -1,7 +1,7 @@
 {
   "identifier": "default",
   "description": "Default capabilities for PoeScout",
-  "windows": ["main", "overlay"],
+  "windows": ["main", "overlay", "timer"],
   "permissions": [
     "core:default",
     "shell:default",
@@ -23,6 +23,7 @@
     "core:window:allow-scale-factor",
     "core:window:allow-is-visible",
     "core:window:allow-set-ignore-cursor-events",
+    "core:window:allow-start-dragging",
     "core:webview:allow-create-webview-window"
   ]
 }

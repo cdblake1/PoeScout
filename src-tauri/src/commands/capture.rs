@@ -9,7 +9,8 @@ use windows::core::w;
 use windows::Win32::Foundation::RECT;
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, GetWindowRect, GetWindowThreadProcessId, SetForegroundWindow,
+    FindWindowW, GetForegroundWindow, GetWindowRect, GetWindowThreadProcessId,
+    SetForegroundWindow,
 };
 
 #[derive(Serialize)]
@@ -66,6 +67,16 @@ pub fn focus_poe_window() -> Result<String, String> {
         } else {
             Ok("SetForegroundWindow returned false".into())
         }
+    }
+}
+
+#[tauri::command]
+pub fn is_poe_foreground() -> bool {
+    unsafe {
+        let Ok(poe_hwnd) = FindWindowW(None, w!("Path of Exile")) else {
+            return false;
+        };
+        GetForegroundWindow() == poe_hwnd
     }
 }
 
