@@ -29,6 +29,9 @@ fn dirs_data_dir() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("."))
 }
 
+/// Best-effort auto-detection for the two most common PoE install locations.
+/// Does not cover custom Steam library paths, Epic Games Store, or non-standard installs.
+/// TODO: replace with a file-picker in the settings UI so users can select manually.
 pub fn detect_client_txt() -> Option<PathBuf> {
     let steam = PathBuf::from(r"C:\Program Files (x86)\Steam\steamapps\common\Path of Exile\logs\Client.txt");
     let standalone = PathBuf::from(r"C:\Program Files (x86)\Grinding Gear Games\Path of Exile\logs\Client.txt");

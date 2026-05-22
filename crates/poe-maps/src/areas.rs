@@ -1,3 +1,6 @@
+/// Canonical hideout names from PoE 1 (source: PoE wiki).
+/// `is_hideout()` also has a suffix fallback (`ends_with("Hideout")`) so
+/// custom hideouts and any new official hideouts are caught automatically.
 static HIDEOUTS: &[&str] = &[
     "Hideout",
     "Coastal Hideout",
@@ -19,6 +22,8 @@ static HIDEOUTS: &[&str] = &[
     "Enlightened Hideout",
 ];
 
+/// The 10 Act town zones from PoE 1 (source: PoE wiki). Stable since 3.0.
+/// No suffix fallback — new towns require a code update.
 static TOWNS: &[&str] = &[
     "Lioneye's Watch",
     "The Forest Encampment",
