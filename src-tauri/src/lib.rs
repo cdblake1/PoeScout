@@ -1,8 +1,11 @@
 mod commands;
 mod state;
 
+use commands::maps::MapTrackerState;
 use state::AppState;
+use std::sync::Arc;
 use tauri::Manager;
+use tokio::sync::Mutex;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -20,12 +23,39 @@ pub fn run() {
                 .expect("failed to get app data dir");
 
             let rt = tokio::runtime::Runtime::new()?;
+            let app_handle = app.handle().clone();
             let state = rt.block_on(async {
-                AppState::init(&data_dir).await
+                let state = AppState::init(&data_dir).await?;
+
+                // Auto-start map tracker
+                let db_path = data_dir.join("poescout.db");
+                let tracker_state: MapTrackerState = Arc::new(Mutex::new(None));
+                if let Some(client_txt_path) = poe_core::config::detect_client_txt() {
+                    match poe_maps::MapTracker::new(&db_path, client_txt_path) {
+                        Ok(mut tracker) => {
+                            if let Err(e) = tracker.start() {
+                                tracing::error!("Failed to start map tracker: {}", e);
+                            }
+                            *tracker_state.lock().await = Some(tracker);
+                            let ts = tracker_state.clone();
+                            let ah = app_handle.clone();
+                            tokio::spawn(async move {
+                                commands::maps::poll_events_loop(ah, ts).await;
+                            });
+                        }
+                        Err(e) => tracing::error!("Failed to init map tracker: {}", e),
+                    }
+                } else {
+                    tracing::warn!("Client.txt not found — map tracker disabled");
+                }
+                app_handle.manage(tracker_state);
+
+                Ok::<_, anyhow::Error>(state)
             })?;
 
             app.manage(state);
             app.manage(rt);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -41,6 +71,10 @@ pub fn run() {
             commands::capture::capture_item_text,
             commands::capture::get_poe_window_rect,
             commands::capture::focus_poe_window,
+            commands::capture::is_poe_foreground,
+            commands::maps::get_tracker_state,
+            commands::maps::get_map_history,
+            commands::maps::get_map_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PoeScout");

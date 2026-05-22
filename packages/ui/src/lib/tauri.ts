@@ -174,3 +174,52 @@ export async function launchPobApp(
     buildCode: buildCode ?? null,
   });
 }
+
+// Map timer types + commands
+
+export interface TrackerState {
+  kind: "Stopped" | "Idle" | "InMap";
+  since?: string;
+  zone_name?: string;
+  map_name?: string;
+  area_level?: number | null;
+  started_at?: string;
+  deaths?: number;
+}
+
+export interface MapRun {
+  id: number | null;
+  map_name: string;
+  area_level: number | null;
+  started_at: string;
+  ended_at: string;
+  duration_secs: number;
+  deaths: number;
+  level_ups: number[];
+}
+
+export interface MapStats {
+  total_runs: number;
+  avg_duration_secs: number;
+  maps_per_hour: number;
+  total_deaths: number;
+}
+
+export async function getTrackerState(): Promise<TrackerState> {
+  return invoke("get_tracker_state");
+}
+
+export async function getMapHistory(
+  limit: number,
+  offset: number
+): Promise<MapRun[]> {
+  return invoke("get_map_history", { limit, offset });
+}
+
+export async function getMapStats(): Promise<MapStats> {
+  return invoke("get_map_stats");
+}
+
+export async function isPoeForegound(): Promise<boolean> {
+  return invoke("is_poe_foreground");
+}

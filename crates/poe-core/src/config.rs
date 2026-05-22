@@ -29,7 +29,7 @@ fn dirs_data_dir() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("."))
 }
 
-fn detect_client_txt() -> Option<PathBuf> {
+pub fn detect_client_txt() -> Option<PathBuf> {
     let steam = PathBuf::from(r"C:\Program Files (x86)\Steam\steamapps\common\Path of Exile\logs\Client.txt");
     let standalone = PathBuf::from(r"C:\Program Files (x86)\Grinding Gear Games\Path of Exile\logs\Client.txt");
     if steam.exists() {
