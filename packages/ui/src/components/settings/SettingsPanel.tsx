@@ -1,0 +1,95 @@
+import { Component, createSignal, For, onMount, Show } from "solid-js";
+import {
+  getAllLeagues,
+  getCurrentLeague,
+  loadSettings,
+  saveSettings,
+} from "../../lib/tauri";
+
+const SettingsPanel: Component = () => {
+  const [leagues, setLeagues] = createSignal<string[]>([]);
+  const [selectedLeague, setSelectedLeague] = createSignal("");
+  const [savedLeague, setSavedLeague] = createSignal("");
+  const [loading, setLoading] = createSignal(true);
+  const [saving, setSaving] = createSignal(false);
+  const [status, setStatus] = createSignal("");
+
+  onMount(async () => {
+    try {
+      const [settings, allLeagues, defaultLeague] = await Promise.all([
+        loadSettings(),
+        getAllLeagues(),
+        getCurrentLeague(),
+      ]);
+
+      setLeagues(allLeagues);
+
+      const league = settings?.league || defaultLeague;
+      setSelectedLeague(league);
+      setSavedLeague(settings?.league || "");
+    } catch (e) {
+      setStatus(`Failed to load settings: ${e}`);
+    } finally {
+      setLoading(false);
+    }
+  });
+
+  const save = async () => {
+    setSaving(true);
+    setStatus("");
+    try {
+      await saveSettings({ league: selectedLeague() });
+      setSavedLeague(selectedLeague());
+      setStatus("Settings saved");
+    } catch (e) {
+      setStatus(`Failed to save: ${e}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const hasChanges = () => selectedLeague() !== (savedLeague() || selectedLeague());
+
+  return (
+    <div class="flex flex-col gap-6 max-w-lg">
+      <h2 class="text-poe-accent font-bold text-lg">Settings</h2>
+
+      <Show when={!loading()} fallback={<span class="text-poe-muted text-sm">Loading...</span>}>
+        <div class="bg-poe-surface border border-poe-border rounded p-4 flex flex-col gap-4">
+          <div class="flex flex-col gap-2">
+            <label class="text-poe-muted text-sm font-bold">League</label>
+            <select
+              class="px-3 py-2 bg-poe-bg border border-poe-border rounded text-poe-text text-sm font-mono focus:border-poe-accent focus:outline-none"
+              value={selectedLeague()}
+              onChange={(e) => setSelectedLeague(e.currentTarget.value)}
+            >
+              <For each={leagues()}>
+                {(league) => <option value={league}>{league}</option>}
+              </For>
+            </select>
+            <p class="text-poe-muted text-xs">
+              Used for price lookups and stash tracking. Defaults to the current softcore challenge league.
+            </p>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <button
+              class="px-4 py-2 bg-poe-accent text-poe-bg rounded font-bold text-sm hover:opacity-90 disabled:opacity-50"
+              onClick={save}
+              disabled={saving() || !hasChanges()}
+            >
+              {saving() ? "Saving..." : "Save"}
+            </button>
+            <Show when={status()}>
+              <span class={status().startsWith("Failed") ? "text-red-400 text-sm" : "text-green-400 text-sm"}>
+                {status()}
+              </span>
+            </Show>
+          </div>
+        </div>
+      </Show>
+    </div>
+  );
+};
+
+export default SettingsPanel;

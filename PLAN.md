@@ -31,16 +31,19 @@
 - [x] Debounced timer show to prevent flicker at character load
 - [ ] Mirage/sub-zone run merging (deferred)
 
-## Phase 4: Stash & Currency Tracker
-- [ ] OAuth 2.1 PKCE for GGG stash API
-- [ ] Fetch stash tabs
-- [ ] poe.ninja price integration (`poe-pricing` crate)
-- [ ] Currency-per-hour calculations
-- [ ] UI: stash viewer + currency/hr dashboard
-
-## Phase 5: PoB Integration
+## Phase 4: PoB Integration
 - [x] Decode build codes (base64 -> zlib -> XML) — `poe-pob/codec.rs`
 - [x] Launch PoB from app — `poe-pob/launch.rs`
-- [ ] UI: paste/input build code
-- [ ] UI: display parsed build summary
-- [ ] Wire one-click PoB launch button
+- [x] UI: paste/input build code — `PobPanel.tsx`
+- [x] UI: display parsed build summary (class, ascendancy, level, main skill, stats)
+- [x] Wire one-click PoB launch button (auto-detects PoB path)
+
+## Phase 5: Stash & Currency Tracker
+- [x] poe.ninja price integration (`poe-pricing` crate) — NinjaClient, PriceCache with 5-min TTL
+- [x] POESESSID auth for GGG stash API (`poe-stash` crate) — rate-limited client
+- [x] Fetch stash tabs + items with item-to-price matching
+- [x] Portfolio snapshot — total chaos/divine value, tab breakdown, top 20 items
+- [x] Currency-per-hour calculations (from snapshot deltas)
+- [x] Credentials persistence (`credentials.json` in app data dir)
+- [x] UI: Stash tab with credentials, portfolio, tab breakdown, top items, price lookup
+- [ ] OAuth 2.1 PKCE (deferred — POESESSID approach for now)

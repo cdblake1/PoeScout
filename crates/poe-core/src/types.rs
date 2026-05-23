@@ -123,6 +123,77 @@ pub struct AffixesForBaseResult {
     pub query_ms: f64,
 }
 
+// --- Pricing types (poe.ninja) ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PriceRecord {
+    pub name: String,
+    pub category: String,
+    pub chaos_value: f64,
+    pub divine_value: Option<f64>,
+    pub icon: Option<String>,
+}
+
+// --- Stash types (GGG API) ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StashTab {
+    pub id: String,
+    pub index: u32,
+    pub tab_type: String,
+    pub color: Option<StashTabColor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StashTabColor {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StashItem {
+    pub name: String,
+    pub type_line: String,
+    pub base_type: Option<String>,
+    pub stack_size: Option<u32>,
+    pub max_stack_size: Option<u32>,
+    pub icon: String,
+    pub ilvl: Option<u32>,
+    pub identified: Option<bool>,
+    pub frame_type: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PricedItem {
+    pub item: StashItem,
+    pub unit_price: Option<f64>,
+    pub total_price: Option<f64>,
+    pub price_source: Option<String>,
+}
+
+// --- Portfolio types ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortfolioSummary {
+    pub total_chaos: f64,
+    pub total_divine: f64,
+    pub tab_summaries: Vec<TabSummary>,
+    pub items: Vec<PricedItem>,
+    pub chaos_per_hour: Option<f64>,
+    pub snapshot_count: u32,
+    #[serde(default)]
+    pub rate_limited: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TabSummary {
+    pub tab_name: String,
+    pub tab_index: u32,
+    pub chaos_value: f64,
+    pub item_count: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BaseSearchQuery {
     pub text: String,

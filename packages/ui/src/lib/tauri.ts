@@ -223,3 +223,139 @@ export async function getMapStats(): Promise<MapStats> {
 export async function isPoeForegound(): Promise<boolean> {
   return invoke("is_poe_foreground");
 }
+
+// Stash & pricing types + commands
+
+export interface PriceRecord {
+  name: string;
+  category: string;
+  chaos_value: number;
+  divine_value: number | null;
+  icon: string | null;
+}
+
+export interface StashTab {
+  id: string;
+  index: number;
+  tab_type: string;
+  color: { r: number; g: number; b: number } | null;
+}
+
+export interface StashItem {
+  name: string;
+  type_line: string;
+  base_type: string | null;
+  stack_size: number | null;
+  max_stack_size: number | null;
+  icon: string;
+  ilvl: number | null;
+  identified: boolean | null;
+  frame_type: number | null;
+}
+
+export interface PricedItem {
+  item: StashItem;
+  unit_price: number | null;
+  total_price: number | null;
+  price_source: string | null;
+}
+
+export interface TabSummary {
+  tab_name: string;
+  tab_index: number;
+  chaos_value: number;
+  item_count: number;
+}
+
+export interface PortfolioSummary {
+  total_chaos: number;
+  total_divine: number;
+  tab_summaries: TabSummary[];
+  items: PricedItem[];
+  chaos_per_hour: number | null;
+  snapshot_count: number;
+  rate_limited: boolean;
+}
+
+export interface Credentials {
+  poesessid: string;
+  account_name: string;
+}
+
+export async function setSessionId(poesessid: string, accountName: string): Promise<void> {
+  return invoke("set_session_id", { poesessid, accountName });
+}
+
+export async function getStashTabs(league: string): Promise<StashTab[]> {
+  return invoke("get_stash_tabs", { league });
+}
+
+export async function takeStashSnapshot(league: string): Promise<PortfolioSummary> {
+  return invoke("take_stash_snapshot", { league });
+}
+
+export async function refreshPrices(league: string): Promise<void> {
+  return invoke("refresh_prices", { league });
+}
+
+export async function getPrice(itemName: string, league: string): Promise<PriceRecord | null> {
+  return invoke("get_price", { itemName, league });
+}
+
+export async function saveCredentials(poesessid: string, accountName: string): Promise<void> {
+  return invoke("save_credentials", { poesessid, accountName });
+}
+
+export async function loadCredentials(): Promise<Credentials | null> {
+  return invoke("load_credentials");
+}
+
+export async function getCurrentLeague(): Promise<string> {
+  return invoke("get_current_league");
+}
+
+export async function getAllLeagues(): Promise<string[]> {
+  return invoke("get_all_leagues");
+}
+
+export interface AppSettings {
+  league?: string;
+  selected_tabs?: number[];
+  min_chaos?: number;
+}
+
+export async function saveSettings(settings: AppSettings): Promise<void> {
+  return invoke("save_settings", { settings });
+}
+
+export async function loadSettings(): Promise<AppSettings | null> {
+  return invoke("load_settings");
+}
+
+export async function takeSelectiveSnapshot(
+  league: string,
+  tabIndices: number[],
+): Promise<PortfolioSummary> {
+  return invoke("take_selective_snapshot", { league, tabIndices });
+}
+
+export async function deleteCredentials(): Promise<void> {
+  return invoke("delete_credentials");
+}
+
+export async function validateCredentials(): Promise<boolean> {
+  return invoke("validate_credentials");
+}
+
+export interface SavedPortfolio {
+  portfolio: PortfolioSummary;
+  last_updated: string;
+}
+
+export async function savePortfolio(portfolio: PortfolioSummary): Promise<void> {
+  return invoke("save_portfolio", { portfolio });
+}
+
+export async function loadPortfolio(): Promise<SavedPortfolio | null> {
+  return invoke("load_portfolio");
+}

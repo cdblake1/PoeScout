@@ -22,6 +22,15 @@ pub enum PoeError {
 
     #[error("Config error: {0}")]
     Config(String),
+
+    #[error("Rate limited — retry after {0}s")]
+    RateLimited(u64),
+
+    #[error("Authentication error: {0}")]
+    Auth(String),
+
+    #[error("API error: {0}")]
+    Api(String),
 }
 
 impl serde::Serialize for PoeError {

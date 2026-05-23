@@ -2,6 +2,7 @@ mod commands;
 mod state;
 
 use commands::maps::MapTrackerState;
+use commands::stash::{PricingState, StashTrackerState};
 use state::AppState;
 use std::sync::Arc;
 use tauri::Manager;
@@ -10,7 +11,7 @@ use tokio::sync::Mutex;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
-        .with_env_filter("poe_scout=debug,poe_data=debug,info")
+        .with_env_filter("poe_scout=debug,poe_data=debug,poe_pricing=debug,info")
         .init();
 
     tauri::Builder::default()
@@ -50,6 +51,20 @@ pub fn run() {
                 }
                 app_handle.manage(tracker_state);
 
+                // Initialize pricing engine + stash tracker
+                let pricing_engine: PricingState = Arc::new(poe_pricing::PricingEngine::new());
+                app_handle.manage(pricing_engine.clone());
+
+                let mut stash_tracker = poe_stash::StashTracker::new(pricing_engine);
+                if let Some((sessid, account)) =
+                    commands::stash::load_credentials_sync(&data_dir)
+                {
+                    tracing::info!("Loaded saved credentials for account: {}", account);
+                    stash_tracker.set_session(sessid, account);
+                }
+                let stash_state: StashTrackerState = Arc::new(Mutex::new(stash_tracker));
+                app_handle.manage(stash_state);
+
                 Ok::<_, anyhow::Error>(state)
             })?;
 
@@ -75,6 +90,22 @@ pub fn run() {
             commands::maps::get_tracker_state,
             commands::maps::get_map_history,
             commands::maps::get_map_stats,
+            commands::stash::set_session_id,
+            commands::stash::get_stash_tabs,
+            commands::stash::take_stash_snapshot,
+            commands::stash::take_selective_snapshot,
+            commands::stash::delete_credentials,
+            commands::stash::validate_credentials,
+            commands::stash::refresh_prices,
+            commands::stash::get_price,
+            commands::stash::save_credentials,
+            commands::stash::load_credentials,
+            commands::stash::get_current_league,
+            commands::stash::get_all_leagues,
+            commands::stash::save_settings,
+            commands::stash::load_settings,
+            commands::stash::save_portfolio,
+            commands::stash::load_portfolio,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PoeScout");
