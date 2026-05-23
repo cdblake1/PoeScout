@@ -5,6 +5,10 @@ edition = "2024"
 
 [dependencies]
 poe-core = { path = "../poe-core" }
+poe-pricing = { path = "../poe-pricing" }
 serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
+tracing.workspace = true
+chrono = { version = "0.4", features = ["serde"] }

@@ -3,6 +3,20 @@
 ## Unreleased
 
 ### Added
+- **Stash & Currency Tracker** — New "Stash" tab for tracking stash value and item prices. Features:
+  - poe.ninja integration: fetches prices for currency, fragments, div cards, uniques, gems, fossils, etc.
+  - In-memory price cache with 5-minute TTL (auto-refreshes when stale)
+  - POESESSID authentication: paste your session cookie to connect to GGG's stash API
+  - Credentials stored securely in app data directory (`credentials.json`), auto-loaded on startup
+  - Stash snapshot: fetches all tabs, prices every item, shows total chaos/divine value
+  - Tab breakdown: per-tab value summary sorted by worth
+  - Top 20 most valuable items table with PoE-style rarity coloring
+  - Chaos/hour calculation from snapshot deltas over time
+  - Standalone price lookup: type any item name to see its poe.ninja price instantly
+  - Rate-limited GGG API client (min 1.1s between requests) to avoid 429s
+  - `poe-pricing` crate: NinjaClient, PriceCache, PricingEngine
+  - `poe-stash` crate: StashClient, item-to-price matcher, StashTracker
+  - 7 Tauri commands: set_session_id, get_stash_tabs, take_stash_snapshot, refresh_prices, get_price, save_credentials, load_credentials
 - **Map Timer** — New "Maps" tab tracks map runs in real time by parsing PoE's Client.txt log. Features:
   - Auto-starts on app launch (no start/stop button)
   - Human-readable map names from "You have entered" log lines

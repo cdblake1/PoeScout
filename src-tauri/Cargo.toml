@@ -8,6 +8,8 @@ poe-core = { path = "../crates/poe-core" }
 poe-data = { path = "../crates/poe-data" }
 poe-pob = { path = "../crates/poe-pob" }
 poe-maps = { path = "../crates/poe-maps" }
+poe-pricing = { path = "../crates/poe-pricing" }
+poe-stash = { path = "../crates/poe-stash" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

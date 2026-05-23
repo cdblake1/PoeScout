@@ -3,6 +3,8 @@ import ModSearch from "./components/lookup/ModSearch";
 import BaseSearch from "./components/lookup/BaseSearch";
 import PobPanel from "./components/pob/PobPanel";
 import MapTimer from "./components/maps/MapTimer";
+import StashPanel from "./components/stash/StashPanel";
+import SettingsPanel from "./components/settings/SettingsPanel";
 import KeybindsPanel from "./components/KeybindsPanel";
 import { initOverlayShortcut, cleanupOverlayShortcut, toggleOverlay } from "./lib/overlay";
 import { activeTab, setActiveTab } from "./lib/navigation";
@@ -55,6 +57,18 @@ const App: Component = () => {
           >
             Maps
           </button>
+          <button
+            class={`px-3 py-1 text-sm rounded ${activeTab() === "stash" ? "bg-poe-accent text-poe-bg" : "text-poe-muted hover:text-poe-text"}`}
+            onClick={() => setActiveTab("stash")}
+          >
+            Stash
+          </button>
+          <button
+            class={`px-3 py-1 text-sm rounded ${activeTab() === "settings" ? "bg-poe-accent text-poe-bg" : "text-poe-muted hover:text-poe-text"}`}
+            onClick={() => setActiveTab("settings")}
+          >
+            Settings
+          </button>
         </nav>
         <div class="ml-auto flex gap-2">
           <button
@@ -74,7 +88,7 @@ const App: Component = () => {
       </header>
 
       <main class="p-4">
-        {activeTab() === "mods" ? <ModSearch /> : activeTab() === "bases" ? <BaseSearch /> : activeTab() === "pob" ? <PobPanel /> : <MapTimer />}
+        {activeTab() === "mods" ? <ModSearch /> : activeTab() === "bases" ? <BaseSearch /> : activeTab() === "pob" ? <PobPanel /> : activeTab() === "maps" ? <MapTimer /> : activeTab() === "stash" ? <StashPanel /> : <SettingsPanel />}
       </main>
 
       <Show when={showKeybinds()}>
