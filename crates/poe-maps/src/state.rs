@@ -115,6 +115,18 @@ pub struct MapSession {
     pub chaos_per_hour: Option<f64>,
 }
 
+/// Aggregated stats for one map type (grouped by internal area id, falling back
+/// to display name).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MapTypeStat {
+    pub map_name: String,
+    pub area_id: Option<String>,
+    pub run_count: u32,
+    pub avg_duration_secs: f64,
+    pub avg_loot_chaos: Option<f64>,
+    pub total_deaths: u32,
+}
+
 pub enum StateEvent {
     MapCompleted(MapRun),
     StateChanged(TrackerState),

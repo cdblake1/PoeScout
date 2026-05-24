@@ -5,11 +5,13 @@ import {
   getMapHistory,
   getMapStats,
   getMapSessions,
+  getMapTypeStats,
   clearMapHistory,
   type TrackerState,
   type MapRun,
   type MapStats,
   type MapSession,
+  type MapTypeStat,
   type MapEncounter,
 } from "../../lib/tauri";
 
@@ -32,6 +34,11 @@ function formatChaos(v: number | null): string {
   return `${Math.round(v).toLocaleString()}c`;
 }
 
+function lootPerHour(m: MapTypeStat): string {
+  if (m.avg_loot_chaos == null || m.avg_duration_secs <= 0) return "—";
+  return Math.round(m.avg_loot_chaos / (m.avg_duration_secs / 3600)).toLocaleString();
+}
+
 function tierOf(run: MapRun): string {
   if (run.map_tier != null) return `T${run.map_tier}`;
   if (run.area_level != null) return `T${Math.max(1, run.area_level - 67)}`;
@@ -51,6 +58,7 @@ const MapTimer: Component = () => {
   const [state, setState] = createSignal<TrackerState>({ kind: "Idle" });
   const [history, setHistory] = createSignal<MapRun[]>([]);
   const [sessions, setSessions] = createSignal<MapSession[]>([]);
+  const [mapTypeStats, setMapTypeStats] = createSignal<MapTypeStat[]>([]);
   const [stats, setStats] = createSignal<MapStats>({
     total_runs: 0,
     avg_duration_secs: 0,
@@ -77,14 +85,16 @@ const MapTimer: Component = () => {
 
   const refreshData = async () => {
     try {
-      const [h, st, ses] = await Promise.all([
+      const [h, st, ses, mts] = await Promise.all([
         getMapHistory(50, 0),
         getMapStats(),
         getMapSessions(20, 0),
+        getMapTypeStats(),
       ]);
       setHistory(h);
       setStats(st);
       setSessions(ses);
+      setMapTypeStats(mts);
     } catch {}
   };
 
@@ -252,6 +262,47 @@ const MapTimer: Component = () => {
                           ? Math.round(s.chaos_per_hour).toLocaleString()
                           : "—"}
                       </td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </Show>
+
+      {/* Per-map stats */}
+      <Show when={mapTypeStats().length > 0}>
+        <div class="bg-poe-surface border border-poe-border rounded">
+          <div class="px-3 py-2 border-b border-poe-border text-poe-muted text-xs uppercase tracking-wide">
+            Per-Map Stats
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-poe-muted text-xs border-b border-poe-border">
+                  <th class="text-left px-3 py-1">Map</th>
+                  <th class="text-right px-3 py-1">Runs</th>
+                  <th class="text-right px-3 py-1">Avg Time</th>
+                  <th class="text-right px-3 py-1">Avg Loot</th>
+                  <th class="text-right px-3 py-1">Loot/hr</th>
+                  <th class="text-right px-3 py-1">Deaths</th>
+                </tr>
+              </thead>
+              <tbody>
+                <For each={mapTypeStats()}>
+                  {(m) => (
+                    <tr class="border-b border-poe-border/50 hover:bg-poe-bg/50">
+                      <td class="px-3 py-1.5 text-poe-accent">{m.map_name}</td>
+                      <td class="px-3 py-1.5 text-right">{m.run_count}</td>
+                      <td class="px-3 py-1.5 text-right tabular-nums">
+                        {formatDuration(m.avg_duration_secs)}
+                      </td>
+                      <td class="px-3 py-1.5 text-right text-green-400">
+                        {m.avg_loot_chaos != null ? formatChaos(m.avg_loot_chaos) : "—"}
+                      </td>
+                      <td class="px-3 py-1.5 text-right">{lootPerHour(m)}</td>
+                      <td class="px-3 py-1.5 text-right text-poe-muted">{m.total_deaths}</td>
                     </tr>
                   )}
                 </For>

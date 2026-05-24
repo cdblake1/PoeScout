@@ -10,7 +10,9 @@ use anyhow::Result;
 use chrono::NaiveDateTime;
 use db::MapDb;
 use parser::LogEvent;
-use state::{LootItem, MapRun, MapSession, MapStats, StateEvent, StateMachine, TrackerState};
+use state::{
+    LootItem, MapRun, MapSession, MapStats, MapTypeStat, StateEvent, StateMachine, TrackerState,
+};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
@@ -124,6 +126,10 @@ impl MapTracker {
 
     pub fn get_stats(&self) -> Result<MapStats> {
         self.db.get_stats()
+    }
+
+    pub fn get_map_type_stats(&self) -> Result<Vec<MapTypeStat>> {
+        self.db.get_map_type_stats()
     }
 
     // --- Sessions (6.2) ---

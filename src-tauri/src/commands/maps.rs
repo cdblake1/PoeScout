@@ -1,6 +1,6 @@
 use crate::commands::stash::StashTrackerState;
 use poe_maps::session::{next_session_action, SessionAction};
-use poe_maps::state::{MapRun, MapSession, MapStats, StateEvent, TrackerState};
+use poe_maps::state::{MapRun, MapSession, MapStats, MapTypeStat, StateEvent, TrackerState};
 use poe_maps::MapTracker;
 use serde::Serialize;
 use std::sync::Arc;
@@ -59,6 +59,17 @@ pub async fn get_map_sessions(
     let guard = tracker_state.lock().await;
     match &*guard {
         Some(tracker) => tracker.get_sessions(limit, offset).map_err(|e| e.to_string()),
+        None => Ok(vec![]),
+    }
+}
+
+#[tauri::command]
+pub async fn get_map_type_stats(
+    tracker_state: State<'_, MapTrackerState>,
+) -> Result<Vec<MapTypeStat>, String> {
+    let guard = tracker_state.lock().await;
+    match &*guard {
+        Some(tracker) => tracker.get_map_type_stats().map_err(|e| e.to_string()),
         None => Ok(vec![]),
     }
 }

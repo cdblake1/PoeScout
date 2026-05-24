@@ -1,4 +1,4 @@
-use crate::state::{LootItem, MapEncounter, MapRun, MapSession, MapStats};
+use crate::state::{LootItem, MapEncounter, MapRun, MapSession, MapStats, MapTypeStat};
 use anyhow::Result;
 use rusqlite::Connection;
 use std::path::Path;
@@ -238,6 +238,36 @@ impl MapDb {
             })
         })?;
         Ok(stats)
+    }
+
+    /// Per-map-type aggregates, grouped by internal area id (falling back to name).
+    pub fn get_map_type_stats(&self) -> Result<Vec<MapTypeStat>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT MAX(map_name) AS map_name, area_id,
+                    COUNT(*) AS run_count,
+                    COALESCE(AVG(duration_secs), 0) AS avg_duration,
+                    AVG(loot_chaos) AS avg_loot,
+                    COALESCE(SUM(deaths), 0) AS total_deaths
+             FROM map_runs
+             GROUP BY COALESCE(area_id, map_name)
+             ORDER BY run_count DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(MapTypeStat {
+                map_name: row.get(0)?,
+                area_id: row.get(1)?,
+                run_count: row.get(2)?,
+                avg_duration_secs: row.get(3)?,
+                avg_loot_chaos: row.get(4)?,
+                total_deaths: row.get(5)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
     }
 
     // --- Sessions (6.2) ---
@@ -794,5 +824,35 @@ mod tests {
             .find(|r| r.id == Some(id))
             .unwrap();
         assert_eq!(run.loot_chaos, Some(210.0));
+    }
+
+    #[test]
+    fn map_type_stats_aggregates() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        let strand = |dur: f64, deaths: u32| MapRun {
+            map_name: "Strand".into(),
+            area_id: Some("MapWorldsStrand".into()),
+            duration_secs: dur,
+            deaths,
+            ..test_run()
+        };
+        db.insert_map_run(&strand(100.0, 1)).unwrap();
+        db.insert_map_run(&strand(200.0, 0)).unwrap();
+        db.insert_map_run(&MapRun {
+            map_name: "Atoll".into(),
+            area_id: Some("MapWorldsAtoll".into()),
+            duration_secs: 50.0,
+            ..test_run()
+        })
+        .unwrap();
+
+        let stats = db.get_map_type_stats().unwrap();
+        // Ordered by run_count desc → Strand (2) first.
+        assert_eq!(stats[0].area_id.as_deref(), Some("MapWorldsStrand"));
+        let strand_stat = &stats[0];
+        assert_eq!(strand_stat.run_count, 2);
+        assert!((strand_stat.avg_duration_secs - 150.0).abs() < 0.1);
+        assert_eq!(strand_stat.total_deaths, 1);
     }
 }

@@ -230,6 +230,15 @@ export interface MapStats {
   total_deaths: number;
 }
 
+export interface MapTypeStat {
+  map_name: string;
+  area_id: string | null;
+  run_count: number;
+  avg_duration_secs: number;
+  avg_loot_chaos: number | null;
+  total_deaths: number;
+}
+
 export interface MapSession {
   id: number | null;
   label: string | null;
@@ -263,6 +272,10 @@ export async function getMapHistory(
 
 export async function getMapStats(): Promise<MapStats> {
   return invoke("get_map_stats");
+}
+
+export async function getMapTypeStats(): Promise<MapTypeStat[]> {
+  return invoke("get_map_type_stats");
 }
 
 export async function getMapSessions(
