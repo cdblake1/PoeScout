@@ -1,4 +1,5 @@
 use crate::commands::stash::StashTrackerState;
+use poe_maps::session::{next_session_action, SessionAction};
 use poe_maps::state::{MapRun, MapSession, MapStats, StateEvent, TrackerState};
 use poe_maps::MapTracker;
 use serde::Serialize;
@@ -210,10 +211,23 @@ pub async fn poll_events_loop(app: AppHandle, tracker_state: MapTrackerState) {
         }
 
         // --- Automatic session lifecycle ---
+        // Maintain the wall-clock idle timer here; delegate the decision to the
+        // pure `next_session_action` (unit-tested in poe-maps).
+        let timeout = settings_idle_timeout(&app);
         if matches!(state, TrackerState::InMap { .. }) {
             idle_since = None;
-            if active_session.is_none() {
-                // First map out of town/hideout → open a session (snapshot stash for start value).
+        } else if active_session.is_some() {
+            if idle_since.is_none() {
+                idle_since = Some(Instant::now());
+            }
+        } else {
+            idle_since = None;
+        }
+        let idle_elapsed = idle_since.map(|t| t.elapsed().as_secs()).unwrap_or(0);
+
+        match next_session_action(&state, active_session.is_some(), idle_elapsed, timeout) {
+            SessionAction::Start => {
+                // First map out of town → open a session (snapshot stash for start value).
                 let start_chaos = snapshot_total_chaos(&app).await;
                 let league = settings_league(&app);
                 let mut guard = tracker_state.lock().await;
@@ -228,28 +242,21 @@ pub async fn poll_events_loop(app: AppHandle, tracker_state: MapTrackerState) {
                     }
                 }
             }
-        } else if active_session.is_some() {
-            // Idle (town/hideout) with an open session → end it after the timeout.
-            match idle_since {
-                None => idle_since = Some(Instant::now()),
-                Some(t) if t.elapsed().as_secs() >= settings_idle_timeout(&app) => {
-                    let end_chaos = snapshot_total_chaos(&app).await;
-                    let mut guard = tracker_state.lock().await;
-                    if let Some(tracker) = guard.as_mut() {
-                        if let Some(sid) = tracker.active_session_id() {
-                            if let Err(e) = tracker.end_session(end_chaos) {
-                                tracing::error!("Failed to end session: {}", e);
-                            } else {
-                                let _ = app.emit("map-tracker:session-end", sid);
-                            }
+            SessionAction::End => {
+                let end_chaos = snapshot_total_chaos(&app).await;
+                let mut guard = tracker_state.lock().await;
+                if let Some(tracker) = guard.as_mut() {
+                    if let Some(sid) = tracker.active_session_id() {
+                        if let Err(e) = tracker.end_session(end_chaos) {
+                            tracing::error!("Failed to end session: {}", e);
+                        } else {
+                            let _ = app.emit("map-tracker:session-end", sid);
                         }
                     }
-                    idle_since = None;
                 }
-                _ => {}
+                idle_since = None;
             }
-        } else {
-            idle_since = None;
+            SessionAction::None => {}
         }
     }
 }

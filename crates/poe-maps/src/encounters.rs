@@ -72,4 +72,20 @@ mod tests {
     fn no_match_for_player_chat() {
         assert!(match_encounter("RandomPlayer", "wtb 6l chest 50c").is_none());
     }
+
+    #[test]
+    fn falls_back_to_by_npc_for_unknown_quote() {
+        // A known NPC saying an unrecognized line → presence match (not specific).
+        let (def, specific) =
+            match_encounter("Einhar, Beastmaster", "some unrecognized einhar banter").unwrap();
+        assert_eq!(def.category, "Bestiary");
+        assert!(!specific);
+    }
+
+    #[test]
+    fn whisper_line_is_not_an_encounter() {
+        // Whisper channel prefixes must not be treated as NPC dialogue.
+        assert!(match_encounter("@From SomePlayer", "selling maps 1c").is_none());
+        assert!(match_encounter("@To SomePlayer", "ty").is_none());
+    }
 }

@@ -534,4 +534,127 @@ mod tests {
         assert!(db.get_active_session().unwrap().is_none());
         assert_eq!(db.get_session_runs(sid).unwrap().len(), 2);
     }
+
+    #[test]
+    fn history_pagination() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        for (i, t) in [
+            "2025-05-20T14:00:10",
+            "2025-05-20T14:01:10",
+            "2025-05-20T14:02:10",
+        ]
+        .iter()
+        .enumerate()
+        {
+            db.insert_map_run(&MapRun {
+                map_name: format!("Map{i}"),
+                started_at: t.to_string(),
+                ..test_run()
+            })
+            .unwrap();
+        }
+        assert_eq!(db.get_history(2, 0).unwrap().len(), 2);
+        assert_eq!(db.get_history(2, 2).unwrap().len(), 1);
+        // Newest first.
+        assert_eq!(db.get_history(1, 0).unwrap()[0].started_at, "2025-05-20T14:02:10");
+    }
+
+    #[test]
+    fn session_active_secs_isolated_per_session() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+
+        let s1 = db
+            .start_session("2025-05-20T14:00:00", None, None, Some(0.0))
+            .unwrap();
+        db.insert_map_run(&MapRun {
+            session_id: Some(s1),
+            duration_secs: 100.0,
+            ..test_run()
+        })
+        .unwrap();
+        db.end_session(s1, "2025-05-20T14:30:00", Some(50.0)).unwrap();
+
+        let s2 = db
+            .start_session("2025-05-20T15:00:00", None, None, Some(50.0))
+            .unwrap();
+        db.insert_map_run(&MapRun {
+            session_id: Some(s2),
+            duration_secs: 200.0,
+            ..test_run()
+        })
+        .unwrap();
+        db.end_session(s2, "2025-05-20T15:30:00", Some(300.0)).unwrap();
+
+        let sessions = db.get_sessions(10, 0).unwrap();
+        let by_id = |id: i64| sessions.iter().find(|s| s.id == Some(id)).unwrap();
+        assert!((by_id(s1).active_secs - 100.0).abs() < 0.001);
+        assert!((by_id(s2).active_secs - 200.0).abs() < 0.001);
+        assert!((by_id(s1).profit_chaos.unwrap() - 50.0).abs() < 0.001);
+        assert!((by_id(s2).profit_chaos.unwrap() - 250.0).abs() < 0.001);
+    }
+
+    /// Integration: a database created by the ORIGINAL (pre-Phase-6) schema must
+    /// upgrade cleanly — ALTERs add the new columns, old rows survive, and the
+    /// new tables become usable.
+    #[test]
+    fn migrates_legacy_v0_database() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("legacy.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE map_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    map_name TEXT NOT NULL,
+                    area_level INTEGER,
+                    started_at TEXT NOT NULL,
+                    ended_at TEXT NOT NULL,
+                    duration_secs REAL NOT NULL,
+                    deaths INTEGER NOT NULL DEFAULT 0,
+                    level_ups TEXT NOT NULL DEFAULT '[]',
+                    hideout_secs REAL NOT NULL DEFAULT 0.0
+                );",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO map_runs
+                    (map_name, area_level, started_at, ended_at, duration_secs, deaths, level_ups)
+                 VALUES ('OldMap', 80, '2025-01-01T00:00:00', '2025-01-01T00:05:00', 300.0, 2, '[88]')",
+                [],
+            )
+            .unwrap();
+            // user_version is left at its default of 0 (a legacy DB).
+        }
+
+        // Opening via MapDb runs the v1 migration.
+        let db = MapDb::open(&path).unwrap();
+
+        let history = db.get_history(10, 0).unwrap();
+        assert_eq!(history.len(), 1);
+        let r = &history[0];
+        assert_eq!(r.map_name, "OldMap");
+        assert_eq!(r.deaths, 2);
+        assert_eq!(r.level_ups, vec![88]);
+        assert!(r.area_id.is_none()); // new column, defaulted
+        assert!(r.session_id.is_none());
+
+        // New tables are usable post-migration.
+        let sid = db
+            .start_session("2025-01-01T01:00:00", None, None, Some(10.0))
+            .unwrap();
+        assert!(sid > 0);
+        let run = MapRun {
+            session_id: Some(sid),
+            encounters: vec![MapEncounter {
+                category: "Delve".into(),
+                detail: None,
+                timestamp: "2025-01-01T01:01:00".into(),
+            }],
+            ..test_run()
+        };
+        db.insert_map_run(&run).unwrap();
+        assert_eq!(db.get_session_runs(sid).unwrap().len(), 1);
+    }
 }

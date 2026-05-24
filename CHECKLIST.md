@@ -1,38 +1,51 @@
-# Phase 5c: Stash Polish — Test Checklist
+# Phase 6 Pass 1 — Manual Test Checklist
 
-## Data Persistence
-- [x] Portfolio data persists when switching tabs (navigate away and back)
-- [x] Portfolio data persists across app restarts
-- [x] "Last updated" timestamp shown in connected header
-- [x] New scan updates the timestamp
+Run `npx --prefix packages/ui tauri dev` with Path of Exile open.
+**Tip:** for faster session testing, set `"session_idle_timeout_secs": 30` in
+`%APPDATA%\PoeScout\settings.json` (default is 900 = 15 min).
 
-## Pagination
-- [x] Items table shows 50 items per page (no scroll)
-- [x] Page controls appear when >50 items
-- [] Prev/Next buttons work, page numbers highlight current
-- [ ] Changing search/filter resets to page 1
+## Runs / UI
+- [ ] Map a zone — live timer shows map name + correct tier
+- [ ] Completed run appears in "Recent Runs" with correct tier and time
+- [ ] Run row shows encounter chips when a league mechanic was present
+- [ ] All-time stats (runs, avg time, maps/hr, deaths) update
 
-## Refresh Prices Status
-- [x] "Refreshing prices..." shown while refresh in progress
-- [x] "Prices refreshed" shown on success
-- [x] "Price fetch failed: ..." shown on error
+## Instance-resume (town portal)
+- [ ] Portal to town mid-map, then return to the SAME map → still ONE run (not split)
+- [ ] That run's idle/hideout time is counted (not added to map duration)
+- [ ] Entering a DIFFERENT map completes the previous run
 
-## Scan Progress
-- [x] Scanning text shows tab type (e.g. "Currency (Currency)", "Gems (Normal)")
+## Hub classification (regression)
+- [ ] Enter Kingsmarch → stays Idle, NO map run created
+- [ ] Enter The Rogue Harbour → stays Idle, NO map run created
+- [ ] Enter Azurite Mine → stays Idle, NO map run created
 
-## Tab Search
-- [x] Tab search matches by tab type (e.g. typing "currency" shows Currency tabs)
+## Encounters
+- [ ] Run a Delve (Niko) → "Delve" chip on the run
+- [ ] Run an Expedition (Tujen/Rog/Gwennen/Dannig) → "Expedition" chip
+- [ ] Run Bestiary / Blight / Betrayal / Breach → matching chip
+- [ ] Same mechanic NPC talking repeatedly → chip appears once (not duplicated)
 
-## Settings Persistence
-- [x] Min chaos threshold saved on blur, restored on next app launch | park for move to settings page, fine for now
-- [x] Tab selection persisted (already tested)
+## Automatic sessions (needs GGG credentials + selected stash tabs)
+- [ ] Connect credentials + select tabs in the Stash tab first
+- [ ] First map out of town auto-starts a session (Sessions panel shows it active)
+- [ ] Map a few times → session "Maps" count and active time grow
+- [ ] Go idle in town/hideout past the timeout → session auto-ends
+- [ ] Ended session shows Profit (chaos) and c/hr in the Sessions panel
+- [ ] With NO credentials/tabs: session still tracks maps/time, Profit blank (no crash)
 
-## Rate Limit Cooldown
-- [x] Cooldown is compact text (no large progress bar)
+## Settings persistence / merge
+- [ ] Set Character in Settings, Save → persists after restart
+- [ ] After saving Character, your selected stash tabs are STILL selected (not wiped)
+- [ ] After changing tabs in Stash, your Character is STILL set (not wiped)
 
-## Startup Safety
-- [x] App launches with no GGG stash API calls (check logs for no 429/stash errors)
-- [x] Saved credentials restore "Connected as ..." without hitting GGG
+## Restart mid-session
+- [ ] Start a session (map once), then close + relaunch the app
+- [ ] The open session resumes (no duplicate session created)
+
+## Attribution (party play, optional)
+- [ ] With Character set, a party member's death does NOT increment your run deaths
+- [ ] With Character set, a party member's level-up is NOT recorded on your run
 
 ## Notes
-<!-- Add any notes, bugs, or observations here -->
+<!-- Add any bugs, observations, or values seen during testing here -->

@@ -2,6 +2,7 @@ pub mod areas;
 pub mod db;
 pub mod encounters;
 pub mod parser;
+pub mod session;
 pub mod state;
 pub mod watcher;
 

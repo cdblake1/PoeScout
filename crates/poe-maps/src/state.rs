@@ -726,4 +726,64 @@ mod tests {
             .iter()
             .any(|e| e.category == "Bestiary" && e.detail.as_deref() == Some("yellow")));
     }
+
+    #[test]
+    fn level_up_attribution() {
+        let mut sm = StateMachine::new(ts(0));
+        sm.set_character(Some("Me".into()));
+        enter_map(&mut sm, 10, "Strand", 83);
+        sm.process(LogEvent::LevelUp {
+            timestamp: ts(20),
+            level: 90,
+            character: Some("Someone".into()),
+        });
+        sm.process(LogEvent::LevelUp {
+            timestamp: ts(25),
+            level: 91,
+            character: Some("Me".into()),
+        });
+        let run = sm.finalize_current(ts(130)).unwrap();
+        assert_eq!(run.level_ups, vec![91]);
+    }
+
+    #[test]
+    fn hideout_secs_accumulates_across_town_hops() {
+        let mut sm = StateMachine::new(ts(0));
+        enter_map_inst(&mut sm, 10, "Strand", 83, "1.1.1.1:6112");
+        enter_hideout(&mut sm, 100, "9.9.9.9:6112"); // suspend; idle since 100
+        enter_hideout(&mut sm, 150, "8.8.8.8:6112"); // town→town; keep idle since 100
+        // Reconnect the ORIGINAL instance and return → resume.
+        sm.process(LogEvent::InstanceConnected {
+            timestamp: ts(200),
+            endpoint: "1.1.1.1:6112".into(),
+        });
+        sm.process(LogEvent::AreaChange {
+            timestamp: ts(201),
+            area_name: "Strand".into(),
+        });
+        let run = sm.finalize_current(ts(260)).unwrap();
+        // Idle from 100 → 201 (~101s) is attributed to the run.
+        assert!(run.hideout_secs >= 100.0, "hideout_secs = {}", run.hideout_secs);
+    }
+
+    #[test]
+    fn finalize_suspended_run_ends_at_suspend_time() {
+        let mut sm = StateMachine::new(ts(0));
+        enter_map(&mut sm, 10, "Strand", 83); // started_at = ts(11)
+        enter_hideout(&mut sm, 130, "9.9.9.9:6112"); // suspend at 130
+        let run = sm.finalize_current(ts(300)).unwrap(); // finalize much later
+        assert_eq!(run.map_name, "Strand");
+        // Duration runs to the suspend time (~119s), not to ts(300).
+        assert!(run.duration_secs < 130.0, "duration = {}", run.duration_secs);
+        assert!(run.duration_secs >= 118.0, "duration = {}", run.duration_secs);
+    }
+
+    #[test]
+    fn league_stamped_on_completed_run() {
+        let mut sm = StateMachine::new(ts(0));
+        sm.set_league(Some("Mirage".into()));
+        enter_map(&mut sm, 10, "Strand", 83);
+        let run = sm.finalize_current(ts(130)).unwrap();
+        assert_eq!(run.league.as_deref(), Some("Mirage"));
+    }
 }

@@ -139,6 +139,22 @@ pub async fn get_all_leagues(
     pricing_state.get_all_leagues().await
 }
 
+/// Shallow-merge `incoming` over `base` so a partial save from one panel (e.g.
+/// `league`) doesn't clobber keys written by another (e.g. `selected_tabs`,
+/// `character`) — both are needed by the automatic session lifecycle. If `base`
+/// isn't a JSON object, `incoming` wins.
+fn merge_settings(base: serde_json::Value, incoming: serde_json::Value) -> serde_json::Value {
+    match (base, incoming) {
+        (serde_json::Value::Object(mut b), serde_json::Value::Object(inc)) => {
+            for (k, v) in inc {
+                b.insert(k, v);
+            }
+            serde_json::Value::Object(b)
+        }
+        (_, incoming) => incoming,
+    }
+}
+
 #[tauri::command]
 pub async fn save_settings(
     settings: serde_json::Value,
@@ -150,22 +166,12 @@ pub async fn save_settings(
         .map_err(|e| e.to_string())?
         .join("settings.json");
 
-    // Shallow-merge into existing settings so partial saves from one panel
-    // (e.g. league) don't clobber keys written by another (e.g. selected_tabs,
-    // character). Both are needed by the automatic session lifecycle.
-    let mut merged = std::fs::read_to_string(&path)
+    let base = std::fs::read_to_string(&path)
         .ok()
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .filter(|v| v.is_object())
         .unwrap_or_else(|| serde_json::json!({}));
 
-    if let (Some(base), Some(incoming)) = (merged.as_object_mut(), settings.as_object()) {
-        for (k, v) in incoming {
-            base.insert(k.clone(), v.clone());
-        }
-    } else {
-        merged = settings;
-    }
+    let merged = merge_settings(base, settings);
 
     std::fs::write(&path, serde_json::to_string_pretty(&merged).unwrap())
         .map_err(|e| format!("Failed to save settings: {}", e))?;
@@ -347,4 +353,36 @@ pub fn load_credentials_sync(
         return None;
     }
     Some((sessid, account))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_settings;
+    use serde_json::json;
+
+    #[test]
+    fn merge_overwrites_and_preserves_other_keys() {
+        let base = json!({"league": "Standard", "selected_tabs": [1, 2], "character": "Me"});
+        let merged = merge_settings(base, json!({"league": "Mirage"}));
+        assert_eq!(merged["league"], "Mirage");
+        assert_eq!(merged["selected_tabs"], json!([1, 2]));
+        assert_eq!(merged["character"], "Me");
+    }
+
+    #[test]
+    fn merge_adds_new_keys() {
+        let merged = merge_settings(
+            json!({"league": "Mirage"}),
+            json!({"character": "Me", "selected_tabs": [3]}),
+        );
+        assert_eq!(merged["league"], "Mirage");
+        assert_eq!(merged["character"], "Me");
+        assert_eq!(merged["selected_tabs"], json!([3]));
+    }
+
+    #[test]
+    fn merge_non_object_base_falls_back_to_incoming() {
+        let merged = merge_settings(json!("corrupt"), json!({"league": "Mirage"}));
+        assert_eq!(merged, json!({"league": "Mirage"}));
+    }
 }
