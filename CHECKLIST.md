@@ -55,7 +55,10 @@ Run `npx --prefix packages/ui tauri dev` with Path of Exile open.
 ## Phase 6.3 — Per-map loot (needs GGG credentials + a character)
 - [ ] 6.3a: `character-window/get-items` returns expected JSON for your character (set Character in Settings)
 - [ ] 6.3b: per-map loot value (loot_chaos) populated on map completion
-- [ ] 6.3b: per-run loot line items stored and shown
+- [ ] 6.3b: per-run loot line items stored and shown (Loot column on Recent Runs)
+- Note: loot is diffed inventory(map start) vs inventory(map completion). For
+  map→town→map, town purchases/crafts between maps can leak into the prior map's
+  loot (known limitation — refine later with per-area snapshots).
 
 ## Notes
 <!-- Add any bugs, observations, or values seen during testing here -->
