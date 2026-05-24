@@ -100,6 +100,7 @@ const MapTimer: Component = () => {
   let unlistenComplete: (() => void) | undefined;
   let unlistenSessionStart: (() => void) | undefined;
   let unlistenSessionEnd: (() => void) | undefined;
+  let unlistenLoot: (() => void) | undefined;
 
   onMount(async () => {
     const s = await getTrackerState();
@@ -119,6 +120,9 @@ const MapTimer: Component = () => {
     unlistenSessionEnd = await listen("map-tracker:session-end", async () => {
       await refreshData();
     });
+    unlistenLoot = await listen("map-tracker:loot", async () => {
+      await refreshData();
+    });
   });
 
   onCleanup(() => {
@@ -127,6 +131,7 @@ const MapTimer: Component = () => {
     unlistenComplete?.();
     unlistenSessionStart?.();
     unlistenSessionEnd?.();
+    unlistenLoot?.();
   });
 
   return (
@@ -285,6 +290,7 @@ const MapTimer: Component = () => {
                   <th class="text-right px-3 py-1">Tier</th>
                   <th class="text-right px-3 py-1">Time</th>
                   <th class="text-right px-3 py-1">Deaths</th>
+                  <th class="text-right px-3 py-1">Loot</th>
                 </tr>
               </thead>
               <tbody>
@@ -315,6 +321,9 @@ const MapTimer: Component = () => {
                         }`}
                       >
                         {run.deaths}
+                      </td>
+                      <td class="px-3 py-1.5 text-right text-green-400">
+                        {run.loot_chaos != null ? formatChaos(run.loot_chaos) : "—"}
                       </td>
                     </tr>
                   )}

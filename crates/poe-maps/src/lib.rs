@@ -10,7 +10,7 @@ use anyhow::Result;
 use chrono::NaiveDateTime;
 use db::MapDb;
 use parser::LogEvent;
-use state::{MapRun, MapSession, MapStats, StateEvent, StateMachine, TrackerState};
+use state::{LootItem, MapRun, MapSession, MapStats, StateEvent, StateMachine, TrackerState};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
@@ -98,8 +98,9 @@ impl MapTracker {
                 match &mut se {
                     StateEvent::MapCompleted(run) => {
                         run.session_id = self.current_session_id;
-                        if let Err(e) = self.db.insert_map_run(run) {
-                            tracing::error!("Failed to save map run: {}", e);
+                        match self.db.insert_map_run(run) {
+                            Ok(id) => run.id = Some(id),
+                            Err(e) => tracing::error!("Failed to save map run: {}", e),
                         }
                     }
                     StateEvent::StateChanged(state) => {
@@ -175,6 +176,10 @@ impl MapTracker {
 
     pub fn clear_history(&self) -> Result<()> {
         self.db.clear_history()
+    }
+
+    pub fn set_run_loot(&self, run_id: i64, loot_chaos: f64, items: &[LootItem]) -> Result<()> {
+        self.db.set_run_loot(run_id, loot_chaos, items)
     }
 
     pub fn set_character(&mut self, character: Option<String>) {

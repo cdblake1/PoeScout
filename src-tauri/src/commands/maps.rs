@@ -127,6 +127,15 @@ fn settings_league(app: &AppHandle) -> Option<String> {
         .map(String::from)
 }
 
+fn settings_character(app: &AppHandle) -> Option<String> {
+    let c = read_settings(app)?.get("character")?.as_str()?.to_string();
+    if c.is_empty() {
+        None
+    } else {
+        Some(c)
+    }
+}
+
 fn settings_idle_timeout(app: &AppHandle) -> u64 {
     read_settings(app)
         .and_then(|v| v.get("session_idle_timeout_secs").and_then(|t| t.as_u64()))
@@ -178,6 +187,8 @@ async fn snapshot_total_chaos(app: &AppHandle) -> Option<f64> {
 pub async fn poll_events_loop(app: AppHandle, tracker_state: MapTrackerState) {
     // Wall-clock timer for auto-ending a session after sustained town/hideout idle.
     let mut idle_since: Option<Instant> = None;
+    // started_at of the run we last baselined, so we snapshot inventory once per run.
+    let mut current_run_key: Option<String> = None;
 
     loop {
         tokio::time::sleep(Duration::from_millis(250)).await;
@@ -217,6 +228,67 @@ pub async fn poll_events_loop(app: AppHandle, tracker_state: MapTrackerState) {
                             total_deaths: *total_deaths,
                         },
                     );
+                }
+            }
+        }
+
+        // --- Per-map loot capture (6.3; needs a configured character + creds) ---
+        if let Some(character) = settings_character(&app) {
+            let mut captured_any = false;
+
+            for event in &events {
+                if let StateEvent::MapCompleted(run) = event {
+                    if let Some(run_id) = run.id {
+                        let league = settings_league(&app).unwrap_or_default();
+                        let captured = {
+                            let stash = app.state::<StashTrackerState>();
+                            let mut t = stash.lock().await;
+                            if t.is_authenticated() && !league.is_empty() {
+                                t.capture_loot(&character, &league).await.ok()
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some((total, priced)) = captured {
+                            captured_any = true;
+                            let items: Vec<poe_maps::state::LootItem> = priced
+                                .into_iter()
+                                .map(|p| poe_maps::state::LootItem {
+                                    name: p.name,
+                                    type_line: p.type_line,
+                                    stack_size: p.stack_size,
+                                    unit_chaos: p.unit_chaos,
+                                    total_chaos: p.total_chaos,
+                                    frame_type: p.frame_type,
+                                })
+                                .collect();
+                            let mut guard = tracker_state.lock().await;
+                            if let Some(tracker) = guard.as_mut() {
+                                if let Err(e) = tracker.set_run_loot(run_id, total, &items) {
+                                    tracing::error!("Failed to save run loot: {}", e);
+                                }
+                            }
+                            drop(guard);
+                            let _ = app.emit("map-tracker:loot", run_id);
+                        }
+                    }
+                }
+            }
+
+            // Baseline the inventory at the start of a new run, unless a capture
+            // this tick already reset the baseline to the current inventory.
+            if let TrackerState::InMap { started_at, .. } = &state {
+                if current_run_key.as_deref() != Some(started_at.as_str()) {
+                    current_run_key = Some(started_at.clone());
+                    if !captured_any {
+                        let stash = app.state::<StashTrackerState>();
+                        let mut t = stash.lock().await;
+                        if t.is_authenticated() {
+                            if let Err(e) = t.snapshot_character_baseline(&character).await {
+                                tracing::warn!("Loot baseline snapshot failed: {}", e);
+                            }
+                        }
+                    }
                 }
             }
         }

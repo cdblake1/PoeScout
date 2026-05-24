@@ -35,6 +35,17 @@ pub struct LootDelta {
     pub frame_type: Option<u32>,
 }
 
+/// A loot delta after poe.ninja pricing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PricedLoot {
+    pub name: String,
+    pub type_line: String,
+    pub stack_size: u32,
+    pub unit_chaos: Option<f64>,
+    pub total_chaos: Option<f64>,
+    pub frame_type: Option<u32>,
+}
+
 fn is_main_inventory(i: &InventoryItem) -> bool {
     // Equipped gear uses slot names (Weapon, Helm, Ring…); only loose items in
     // the backpack are MainInventory.
