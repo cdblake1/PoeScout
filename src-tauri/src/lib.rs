@@ -112,6 +112,7 @@ pub fn run() {
             commands::maps::get_map_sessions,
             commands::maps::get_session_detail,
             commands::maps::set_tracked_character,
+            commands::maps::clear_map_history,
             commands::stash::set_session_id,
             commands::stash::get_stash_tabs,
             commands::stash::take_stash_snapshot,

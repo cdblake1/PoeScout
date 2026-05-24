@@ -5,6 +5,7 @@ import {
   getMapHistory,
   getMapStats,
   getMapSessions,
+  clearMapHistory,
   type TrackerState,
   type MapRun,
   type MapStats,
@@ -84,6 +85,14 @@ const MapTimer: Component = () => {
       setHistory(h);
       setStats(st);
       setSessions(ses);
+    } catch {}
+  };
+
+  const clearHistory = async () => {
+    if (!window.confirm("Clear all recorded map runs? This cannot be undone.")) return;
+    try {
+      await clearMapHistory();
+      await refreshData();
     } catch {}
   };
 
@@ -249,8 +258,16 @@ const MapTimer: Component = () => {
 
       {/* History table */}
       <div class="bg-poe-surface border border-poe-border rounded">
-        <div class="px-3 py-2 border-b border-poe-border text-poe-muted text-xs uppercase tracking-wide">
-          Recent Runs
+        <div class="px-3 py-2 border-b border-poe-border text-poe-muted text-xs uppercase tracking-wide flex items-center justify-between">
+          <span>Recent Runs</span>
+          <Show when={history().length > 0}>
+            <button
+              class="normal-case text-poe-muted hover:text-red-400 text-xs"
+              onClick={clearHistory}
+            >
+              Clear
+            </button>
+          </Show>
         </div>
         <Show
           when={history().length > 0}

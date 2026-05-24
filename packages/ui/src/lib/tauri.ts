@@ -270,6 +270,10 @@ export async function setTrackedCharacter(character: string | null): Promise<voi
   return invoke("set_tracked_character", { character });
 }
 
+export async function clearMapHistory(): Promise<void> {
+  return invoke("clear_map_history");
+}
+
 export async function isPoeForegound(): Promise<boolean> {
   return invoke("is_poe_foreground");
 }

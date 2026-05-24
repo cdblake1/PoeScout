@@ -374,6 +374,14 @@ impl MapDb {
         }
         Ok(runs)
     }
+
+    /// Delete all map runs and their encounters (the "Recent Runs" history).
+    /// Sessions are left intact.
+    pub fn clear_history(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch("DELETE FROM map_encounters; DELETE FROM map_runs;")?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -656,5 +664,24 @@ mod tests {
         };
         db.insert_map_run(&run).unwrap();
         assert_eq!(db.get_session_runs(sid).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn clear_history_removes_runs_and_encounters() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        let run = MapRun {
+            encounters: vec![MapEncounter {
+                category: "Delve".into(),
+                detail: None,
+                timestamp: "2025-05-20T14:00:20".into(),
+            }],
+            ..test_run()
+        };
+        db.insert_map_run(&run).unwrap();
+        assert_eq!(db.get_history(10, 0).unwrap().len(), 1);
+
+        db.clear_history().unwrap();
+        assert_eq!(db.get_history(10, 0).unwrap().len(), 0);
     }
 }

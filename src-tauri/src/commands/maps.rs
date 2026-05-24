@@ -101,6 +101,17 @@ pub async fn set_tracked_character(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn clear_map_history(
+    tracker_state: State<'_, MapTrackerState>,
+) -> Result<(), String> {
+    let guard = tracker_state.lock().await;
+    match &*guard {
+        Some(tracker) => tracker.clear_history().map_err(|e| e.to_string()),
+        None => Ok(()),
+    }
+}
+
 // --- Auto session lifecycle helpers ---
 
 fn read_settings(app: &AppHandle) -> Option<serde_json::Value> {

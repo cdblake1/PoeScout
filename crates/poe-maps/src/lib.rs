@@ -173,6 +173,10 @@ impl MapTracker {
         self.db.get_session_runs(session_id)
     }
 
+    pub fn clear_history(&self) -> Result<()> {
+        self.db.clear_history()
+    }
+
     pub fn set_character(&mut self, character: Option<String>) {
         self.state_machine.set_character(character);
     }
