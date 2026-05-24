@@ -5,6 +5,7 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 const STASH_API_URL: &str = "https://www.pathofexile.com/character-window/get-stash-items";
+const CHARACTER_API_URL: &str = "https://www.pathofexile.com/character-window/get-items";
 const MIN_REQUEST_INTERVAL: Duration = Duration::from_millis(1100);
 const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 
@@ -196,5 +197,35 @@ impl StashClient {
                 frame_type: i.frame_type,
             }
         }).collect())
+    }
+
+    /// Fetch a character's items (inventory + equipment) for per-map loot diffing.
+    /// Different endpoint than stash, so it has a separate rate budget.
+    /// PoE account + character names are alphanumeric/underscore (no spaces), so
+    /// no URL-encoding is needed.
+    pub async fn fetch_character_inventory(
+        &mut self,
+        character: &str,
+    ) -> Result<Vec<crate::inventory::InventoryItem>, String> {
+        let account = self
+            .account_name
+            .as_ref()
+            .ok_or_else(|| "No account name set".to_string())?;
+        let url = format!(
+            "{}?accountName={}&character={}",
+            CHARACTER_API_URL, account, character
+        );
+        let resp = self.rate_limited_get(&url).await?;
+
+        #[derive(Deserialize)]
+        struct Resp {
+            #[serde(default)]
+            items: Vec<crate::inventory::InventoryItem>,
+        }
+        let raw: Resp = resp
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse character items: {}", e))?;
+        Ok(raw.items)
     }
 }

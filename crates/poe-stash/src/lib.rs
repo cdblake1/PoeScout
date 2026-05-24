@@ -1,4 +1,5 @@
 pub mod client;
+pub mod inventory;
 pub mod matcher;
 
 use client::StashClient;
