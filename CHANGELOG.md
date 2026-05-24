@@ -3,6 +3,17 @@
 ## Unreleased
 
 ### Added
+- **Advanced Map Tracking & Sessions (Phase 6, Pass 1)** — richer Client.txt parsing plus automatic farming sessions with currency/hour:
+  - Internal area-id capture (`Generating level N area "Id"`) → canonical map identity, real map tier, and an `AreaType` classifier (map/town/hideout/hub/…) that fixes Kingsmarch, The Rogue Harbour, and Azurite Mine being mis-counted as map runs
+  - Instance-endpoint tracking (`Connecting to instance server at`) so town-portalling back into a map *resumes* the same run instead of splitting it; idle/hideout time attributed to runs; sub-areas (Vaal/lab/abyss) no longer split a run
+  - League-mechanic encounter detection from NPC dialogue (`data/encounters.json`, title-agnostic `by_npc` + exact `by_quote`), stored per run and shown as chips
+  - Death/level-up attribution to your character (set in Settings); removed the dead `You have died` branch (real deaths are `has been slain`)
+  - Automatic sessions: stash snapshot on the first map out of town, snapshot again after an idle timeout (default 15 min); profit = Δchaos; currency/hour over *active map time* (idle excluded); open sessions survive an app restart
+  - SQLite: `user_version` migration framework; new `map_runs` columns (area_id, area_type, map_tier, instance_id, league, session_id, hideout_secs) plus `map_sessions` and `map_encounters` tables
+  - UI: Sessions panel (profit, c/hr, maps, active time) and encounter chips in the Maps tab; Settings character field
+  - `save_settings` now shallow-merges so panels no longer clobber each other's keys
+  - New commands: `get_map_sessions`, `get_session_detail`, `set_tracked_character`; new events: `session-start`, `session-end`
+  - 35 `poe-maps` unit tests
 - **Stash & Currency Tracker** — New "Stash" tab for tracking stash value and item prices. Features:
   - poe.ninja integration: fetches prices for currency, fragments, div cards, uniques, gems, fossils, etc.
   - In-memory price cache with 5-minute TTL (auto-refreshes when stale)

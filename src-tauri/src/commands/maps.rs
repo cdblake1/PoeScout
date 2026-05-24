@@ -1,10 +1,15 @@
-use poe_maps::state::{MapRun, MapStats, StateEvent, TrackerState};
+use crate::commands::stash::StashTrackerState;
+use poe_maps::state::{MapRun, MapSession, MapStats, StateEvent, TrackerState};
 use poe_maps::MapTracker;
+use serde::Serialize;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, State};
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
 
 pub type MapTrackerState = Arc<Mutex<Option<MapTracker>>>;
+
+const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 900; // 15 min in town/hideout auto-ends a session
 
 #[tauri::command]
 pub async fn get_tracker_state(
@@ -31,9 +36,7 @@ pub async fn get_map_history(
 }
 
 #[tauri::command]
-pub async fn get_map_stats(
-    tracker_state: State<'_, MapTrackerState>,
-) -> Result<MapStats, String> {
+pub async fn get_map_stats(tracker_state: State<'_, MapTrackerState>) -> Result<MapStats, String> {
     let guard = tracker_state.lock().await;
     match &*guard {
         Some(tracker) => tracker.get_stats().map_err(|e| e.to_string()),
@@ -46,21 +49,140 @@ pub async fn get_map_stats(
     }
 }
 
-pub async fn poll_events_loop(app: AppHandle, tracker_state: MapTrackerState) {
-    loop {
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+#[tauri::command]
+pub async fn get_map_sessions(
+    limit: u32,
+    offset: u32,
+    tracker_state: State<'_, MapTrackerState>,
+) -> Result<Vec<MapSession>, String> {
+    let guard = tracker_state.lock().await;
+    match &*guard {
+        Some(tracker) => tracker.get_sessions(limit, offset).map_err(|e| e.to_string()),
+        None => Ok(vec![]),
+    }
+}
 
-        let mut guard = tracker_state.lock().await;
-        let tracker = match guard.as_mut() {
-            Some(t) if t.is_running() => t,
-            _ => return,
+#[derive(Serialize)]
+pub struct SessionDetail {
+    session: MapSession,
+    runs: Vec<MapRun>,
+}
+
+#[tauri::command]
+pub async fn get_session_detail(
+    session_id: i64,
+    tracker_state: State<'_, MapTrackerState>,
+) -> Result<SessionDetail, String> {
+    let guard = tracker_state.lock().await;
+    let tracker = guard.as_ref().ok_or("Map tracker not running")?;
+    let session = tracker
+        .get_sessions(1000, 0)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|s| s.id == Some(session_id))
+        .ok_or("Session not found")?;
+    let runs = tracker
+        .get_session_runs(session_id)
+        .map_err(|e| e.to_string())?;
+    Ok(SessionDetail { session, runs })
+}
+
+/// Set the player's character so deaths/level-ups are attributed only to them.
+#[tauri::command]
+pub async fn set_tracked_character(
+    character: Option<String>,
+    tracker_state: State<'_, MapTrackerState>,
+) -> Result<(), String> {
+    let mut guard = tracker_state.lock().await;
+    if let Some(tracker) = guard.as_mut() {
+        tracker.set_character(character);
+    }
+    Ok(())
+}
+
+// --- Auto session lifecycle helpers ---
+
+fn read_settings(app: &AppHandle) -> Option<serde_json::Value> {
+    let path = app.path().app_data_dir().ok()?.join("settings.json");
+    let raw = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+fn settings_league(app: &AppHandle) -> Option<String> {
+    read_settings(app)?
+        .get("league")?
+        .as_str()
+        .map(String::from)
+}
+
+fn settings_idle_timeout(app: &AppHandle) -> u64 {
+    read_settings(app)
+        .and_then(|v| v.get("session_idle_timeout_secs").and_then(|t| t.as_u64()))
+        .unwrap_or(DEFAULT_IDLE_TIMEOUT_SECS)
+}
+
+/// Best-effort total chaos of the user's selected stash tabs. Returns `None` if
+/// not authenticated, no tabs selected, or the scan fails (e.g. rate limited) —
+/// in which case a session is recorded without a profit figure.
+async fn snapshot_total_chaos(app: &AppHandle) -> Option<f64> {
+    let settings = read_settings(app)?;
+    let league = settings.get("league")?.as_str()?.to_string();
+    let tabs: Vec<u32> = settings
+        .get("selected_tabs")?
+        .as_array()?
+        .iter()
+        .filter_map(|v| v.as_u64().map(|n| n as u32))
+        .collect();
+    if tabs.is_empty() {
+        return None;
+    }
+
+    let stash_state = app.state::<StashTrackerState>();
+    let mut tracker = stash_state.lock().await;
+    if !tracker.is_authenticated() {
+        return None;
+    }
+    tracker.ensure_pricing_fresh(&league).await.ok()?;
+
+    let all_tabs = match tracker.get_cached_tabs() {
+        Some(cached) => cached.clone(),
+        None => tracker.fetch_tabs(&league).await.ok()?,
+    };
+    let selected: Vec<_> = all_tabs
+        .into_iter()
+        .filter(|t| tabs.contains(&t.index))
+        .collect();
+
+    let mut total = 0.0;
+    for tab in &selected {
+        match tracker.scan_single_tab(&league, tab).await {
+            Ok((summary, _priced)) => total += summary.chaos_value,
+            Err(_) => return None, // rate limited / error → no reliable figure
+        }
+    }
+    Some(total)
+}
+
+pub async fn poll_events_loop(app: AppHandle, tracker_state: MapTrackerState) {
+    // Wall-clock timer for auto-ending a session after sustained town/hideout idle.
+    let mut idle_since: Option<Instant> = None;
+
+    loop {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        // Drain + persist events, then read state without holding the lock further.
+        let (events, state, active_session) = {
+            let mut guard = tracker_state.lock().await;
+            let tracker = match guard.as_mut() {
+                Some(t) if t.is_running() => t,
+                _ => return,
+            };
+            let events = tracker.poll_events();
+            (events, tracker.state(), tracker.active_session_id())
         };
 
-        let events = tracker.poll_events();
-        drop(guard);
-
-        for event in events {
-            match &event {
+        for event in &events {
+            match event {
                 StateEvent::StateChanged(state) => {
                     let _ = app.emit("map-tracker:state-change", state);
                 }
@@ -85,6 +207,49 @@ pub async fn poll_events_loop(app: AppHandle, tracker_state: MapTrackerState) {
                     );
                 }
             }
+        }
+
+        // --- Automatic session lifecycle ---
+        if matches!(state, TrackerState::InMap { .. }) {
+            idle_since = None;
+            if active_session.is_none() {
+                // First map out of town/hideout → open a session (snapshot stash for start value).
+                let start_chaos = snapshot_total_chaos(&app).await;
+                let league = settings_league(&app);
+                let mut guard = tracker_state.lock().await;
+                if let Some(tracker) = guard.as_mut() {
+                    if tracker.active_session_id().is_none() {
+                        match tracker.start_session(league.as_deref(), None, start_chaos) {
+                            Ok(id) => {
+                                let _ = app.emit("map-tracker:session-start", id);
+                            }
+                            Err(e) => tracing::error!("Failed to start session: {}", e),
+                        }
+                    }
+                }
+            }
+        } else if active_session.is_some() {
+            // Idle (town/hideout) with an open session → end it after the timeout.
+            match idle_since {
+                None => idle_since = Some(Instant::now()),
+                Some(t) if t.elapsed().as_secs() >= settings_idle_timeout(&app) => {
+                    let end_chaos = snapshot_total_chaos(&app).await;
+                    let mut guard = tracker_state.lock().await;
+                    if let Some(tracker) = guard.as_mut() {
+                        if let Some(sid) = tracker.active_session_id() {
+                            if let Err(e) = tracker.end_session(end_chaos) {
+                                tracing::error!("Failed to end session: {}", e);
+                            } else {
+                                let _ = app.emit("map-tracker:session-end", sid);
+                            }
+                        }
+                    }
+                    idle_since = None;
+                }
+                _ => {}
+            }
+        } else {
+            idle_since = None;
         }
     }
 }

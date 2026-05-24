@@ -150,7 +150,24 @@ pub async fn save_settings(
         .map_err(|e| e.to_string())?
         .join("settings.json");
 
-    std::fs::write(&path, serde_json::to_string_pretty(&settings).unwrap())
+    // Shallow-merge into existing settings so partial saves from one panel
+    // (e.g. league) don't clobber keys written by another (e.g. selected_tabs,
+    // character). Both are needed by the automatic session lifecycle.
+    let mut merged = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .filter(|v| v.is_object())
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    if let (Some(base), Some(incoming)) = (merged.as_object_mut(), settings.as_object()) {
+        for (k, v) in incoming {
+            base.insert(k.clone(), v.clone());
+        }
+    } else {
+        merged = settings;
+    }
+
+    std::fs::write(&path, serde_json::to_string_pretty(&merged).unwrap())
         .map_err(|e| format!("Failed to save settings: {}", e))?;
 
     Ok(())

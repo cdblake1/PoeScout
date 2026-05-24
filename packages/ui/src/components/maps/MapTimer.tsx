@@ -4,9 +4,12 @@ import {
   getTrackerState,
   getMapHistory,
   getMapStats,
+  getMapSessions,
   type TrackerState,
   type MapRun,
   type MapStats,
+  type MapSession,
+  type MapEncounter,
 } from "../../lib/tauri";
 
 function formatDuration(secs: number): string {
@@ -23,6 +26,21 @@ function formatDurationLong(secs: number): string {
   return `${m}m ${s}s`;
 }
 
+function formatChaos(v: number | null): string {
+  if (v == null) return "—";
+  return `${Math.round(v).toLocaleString()}c`;
+}
+
+function tierOf(run: MapRun): string {
+  if (run.map_tier != null) return `T${run.map_tier}`;
+  if (run.area_level != null) return `T${Math.max(1, run.area_level - 67)}`;
+  return "-";
+}
+
+function encounterCategories(encs: MapEncounter[]): string[] {
+  return Array.from(new Set(encs.map((e) => e.category)));
+}
+
 function elapsedSince(isoTimestamp: string): number {
   const start = new Date(isoTimestamp).getTime();
   return Math.max(0, (Date.now() - start) / 1000);
@@ -31,6 +49,7 @@ function elapsedSince(isoTimestamp: string): number {
 const MapTimer: Component = () => {
   const [state, setState] = createSignal<TrackerState>({ kind: "Idle" });
   const [history, setHistory] = createSignal<MapRun[]>([]);
+  const [sessions, setSessions] = createSignal<MapSession[]>([]);
   const [stats, setStats] = createSignal<MapStats>({
     total_runs: 0,
     avg_duration_secs: 0,
@@ -38,6 +57,8 @@ const MapTimer: Component = () => {
     total_deaths: 0,
   });
   const [elapsed, setElapsed] = createSignal(0);
+
+  const activeSession = () => sessions().find((s) => s.ended_at === null);
 
   let tickInterval: number | undefined;
 
@@ -55,14 +76,21 @@ const MapTimer: Component = () => {
 
   const refreshData = async () => {
     try {
-      const [h, st] = await Promise.all([getMapHistory(50, 0), getMapStats()]);
+      const [h, st, ses] = await Promise.all([
+        getMapHistory(50, 0),
+        getMapStats(),
+        getMapSessions(20, 0),
+      ]);
       setHistory(h);
       setStats(st);
+      setSessions(ses);
     } catch {}
   };
 
   let unlistenState: (() => void) | undefined;
   let unlistenComplete: (() => void) | undefined;
+  let unlistenSessionStart: (() => void) | undefined;
+  let unlistenSessionEnd: (() => void) | undefined;
 
   onMount(async () => {
     const s = await getTrackerState();
@@ -73,8 +101,13 @@ const MapTimer: Component = () => {
     unlistenState = await listen<TrackerState>("map-tracker:state-change", (e) => {
       setState(e.payload);
     });
-
     unlistenComplete = await listen<MapRun>("map-tracker:map-complete", async () => {
+      await refreshData();
+    });
+    unlistenSessionStart = await listen("map-tracker:session-start", async () => {
+      await refreshData();
+    });
+    unlistenSessionEnd = await listen("map-tracker:session-end", async () => {
       await refreshData();
     });
   });
@@ -83,6 +116,8 @@ const MapTimer: Component = () => {
     if (tickInterval !== undefined) clearInterval(tickInterval);
     unlistenState?.();
     unlistenComplete?.();
+    unlistenSessionStart?.();
+    unlistenSessionEnd?.();
   });
 
   return (
@@ -101,6 +136,11 @@ const MapTimer: Component = () => {
         <span class="text-poe-muted text-sm">
           {state().kind === "InMap" ? "In Map" : state().kind === "Idle" ? "Idle" : "Waiting for zone..."}
         </span>
+        <Show when={activeSession()}>
+          <span class="text-green-400 text-xs ml-auto">
+            ● Session: {activeSession()!.run_count} maps · {formatDurationLong(activeSession()!.active_secs)}
+          </span>
+        </Show>
       </div>
 
       {/* Live timer */}
@@ -111,7 +151,7 @@ const MapTimer: Component = () => {
               {state().map_name}
               <Show when={state().area_level}>
                 <span class="text-poe-muted text-sm ml-2">
-                  (T{Math.max(1, (state().area_level || 83) - 67)})
+                  (T{state().map_tier ?? Math.max(1, (state().area_level || 83) - 67)})
                 </span>
               </Show>
             </div>
@@ -119,9 +159,7 @@ const MapTimer: Component = () => {
               {formatDuration(elapsed())}
             </div>
             <Show when={(state().deaths || 0) > 0}>
-              <div class="text-red-400 text-sm mt-1">
-                Deaths: {state().deaths}
-              </div>
+              <div class="text-red-400 text-sm mt-1">Deaths: {state().deaths}</div>
             </Show>
           </div>
         </Show>
@@ -135,7 +173,7 @@ const MapTimer: Component = () => {
         </Show>
       </div>
 
-      {/* Session stats */}
+      {/* All-time stats */}
       <Show when={stats().total_runs > 0}>
         <div class="grid grid-cols-4 gap-3">
           <div class="bg-poe-surface border border-poe-border rounded p-3 text-center">
@@ -144,21 +182,67 @@ const MapTimer: Component = () => {
           </div>
           <div class="bg-poe-surface border border-poe-border rounded p-3 text-center">
             <div class="text-poe-muted text-xs">Avg Time</div>
-            <div class="text-lg font-bold">
-              {formatDuration(stats().avg_duration_secs)}
-            </div>
+            <div class="text-lg font-bold">{formatDuration(stats().avg_duration_secs)}</div>
           </div>
           <div class="bg-poe-surface border border-poe-border rounded p-3 text-center">
             <div class="text-poe-muted text-xs">Maps/hr</div>
-            <div class="text-lg font-bold">
-              {stats().maps_per_hour.toFixed(1)}
-            </div>
+            <div class="text-lg font-bold">{stats().maps_per_hour.toFixed(1)}</div>
           </div>
           <div class="bg-poe-surface border border-poe-border rounded p-3 text-center">
             <div class="text-poe-muted text-xs">Deaths</div>
-            <div class="text-lg font-bold text-red-400">
-              {stats().total_deaths}
-            </div>
+            <div class="text-lg font-bold text-red-400">{stats().total_deaths}</div>
+          </div>
+        </div>
+      </Show>
+
+      {/* Sessions */}
+      <Show when={sessions().length > 0}>
+        <div class="bg-poe-surface border border-poe-border rounded">
+          <div class="px-3 py-2 border-b border-poe-border text-poe-muted text-xs uppercase tracking-wide">
+            Sessions
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-poe-muted text-xs border-b border-poe-border">
+                  <th class="text-left px-3 py-1">Started</th>
+                  <th class="text-right px-3 py-1">Maps</th>
+                  <th class="text-right px-3 py-1">Active</th>
+                  <th class="text-right px-3 py-1">Profit</th>
+                  <th class="text-right px-3 py-1">c/hr</th>
+                </tr>
+              </thead>
+              <tbody>
+                <For each={sessions()}>
+                  {(s) => (
+                    <tr class="border-b border-poe-border/50 hover:bg-poe-bg/50">
+                      <td class="px-3 py-1.5">
+                        {new Date(s.started_at).toLocaleString()}
+                        <Show when={s.ended_at === null}>
+                          <span class="text-green-400 ml-1">●</span>
+                        </Show>
+                      </td>
+                      <td class="px-3 py-1.5 text-right">{s.run_count}</td>
+                      <td class="px-3 py-1.5 text-right tabular-nums">
+                        {formatDurationLong(s.active_secs)}
+                      </td>
+                      <td
+                        class={`px-3 py-1.5 text-right ${
+                          (s.profit_chaos ?? 0) >= 0 ? "text-green-400" : "text-red-400"
+                        }`}
+                      >
+                        {formatChaos(s.profit_chaos)}
+                      </td>
+                      <td class="px-3 py-1.5 text-right">
+                        {s.chaos_per_hour != null
+                          ? Math.round(s.chaos_per_hour).toLocaleString()
+                          : "—"}
+                      </td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
           </div>
         </div>
       </Show>
@@ -190,12 +274,21 @@ const MapTimer: Component = () => {
                 <For each={history()}>
                   {(run) => (
                     <tr class="border-b border-poe-border/50 hover:bg-poe-bg/50">
-                      <td class="px-3 py-1.5 text-poe-accent">{run.map_name}</td>
-                      <td class="px-3 py-1.5 text-right text-poe-muted">
-                        {run.area_level
-                          ? `T${Math.max(1, run.area_level - 67)}`
-                          : "-"}
+                      <td class="px-3 py-1.5 text-poe-accent">
+                        {run.map_name}
+                        <Show when={run.encounters.length > 0}>
+                          <div class="flex flex-wrap gap-1 mt-0.5">
+                            <For each={encounterCategories(run.encounters)}>
+                              {(c) => (
+                                <span class="text-[10px] px-1 rounded bg-poe-bg text-poe-muted border border-poe-border">
+                                  {c}
+                                </span>
+                              )}
+                            </For>
+                          </div>
+                        </Show>
                       </td>
+                      <td class="px-3 py-1.5 text-right text-poe-muted">{tierOf(run)}</td>
                       <td class="px-3 py-1.5 text-right tabular-nums">
                         {formatDuration(run.duration_secs)}
                       </td>

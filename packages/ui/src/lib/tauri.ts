@@ -183,19 +183,34 @@ export interface TrackerState {
   zone_name?: string;
   map_name?: string;
   area_level?: number | null;
+  map_tier?: number | null;
   started_at?: string;
   deaths?: number;
+}
+
+export interface MapEncounter {
+  category: string;
+  detail: string | null;
+  timestamp: string;
 }
 
 export interface MapRun {
   id: number | null;
   map_name: string;
+  area_id: string | null;
   area_level: number | null;
+  area_type: string | null;
+  map_tier: number | null;
+  instance_id: string | null;
+  league: string | null;
+  session_id: number | null;
   started_at: string;
   ended_at: string;
   duration_secs: number;
+  hideout_secs: number;
   deaths: number;
   level_ups: number[];
+  encounters: MapEncounter[];
 }
 
 export interface MapStats {
@@ -203,6 +218,26 @@ export interface MapStats {
   avg_duration_secs: number;
   maps_per_hour: number;
   total_deaths: number;
+}
+
+export interface MapSession {
+  id: number | null;
+  label: string | null;
+  league: string | null;
+  started_at: string;
+  ended_at: string | null;
+  start_chaos: number | null;
+  end_chaos: number | null;
+  profit_chaos: number | null;
+  active_secs: number;
+  notes: string | null;
+  run_count: number;
+  chaos_per_hour: number | null;
+}
+
+export interface SessionDetail {
+  session: MapSession;
+  runs: MapRun[];
 }
 
 export async function getTrackerState(): Promise<TrackerState> {
@@ -218,6 +253,21 @@ export async function getMapHistory(
 
 export async function getMapStats(): Promise<MapStats> {
   return invoke("get_map_stats");
+}
+
+export async function getMapSessions(
+  limit: number,
+  offset: number
+): Promise<MapSession[]> {
+  return invoke("get_map_sessions", { limit, offset });
+}
+
+export async function getSessionDetail(sessionId: number): Promise<SessionDetail> {
+  return invoke("get_session_detail", { sessionId });
+}
+
+export async function setTrackedCharacter(character: string | null): Promise<void> {
+  return invoke("set_tracked_character", { character });
 }
 
 export async function isPoeForegound(): Promise<boolean> {
@@ -322,6 +372,8 @@ export interface AppSettings {
   league?: string;
   selected_tabs?: number[];
   min_chaos?: number;
+  character?: string;
+  session_idle_timeout_secs?: number;
 }
 
 export async function saveSettings(settings: AppSettings): Promise<void> {

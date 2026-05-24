@@ -37,6 +37,25 @@ pub fn run() {
                             if let Err(e) = tracker.start() {
                                 tracing::error!("Failed to start map tracker: {}", e);
                             }
+                            // Apply persisted character (for death/level-up attribution) + league.
+                            if let Ok(raw) =
+                                std::fs::read_to_string(data_dir.join("settings.json"))
+                            {
+                                if let Ok(v) =
+                                    serde_json::from_str::<serde_json::Value>(&raw)
+                                {
+                                    tracker.set_character(
+                                        v.get("character")
+                                            .and_then(|c| c.as_str())
+                                            .map(String::from),
+                                    );
+                                    tracker.set_league(
+                                        v.get("league")
+                                            .and_then(|c| c.as_str())
+                                            .map(String::from),
+                                    );
+                                }
+                            }
                             *tracker_state.lock().await = Some(tracker);
                             let ts = tracker_state.clone();
                             let ah = app_handle.clone();
@@ -90,6 +109,9 @@ pub fn run() {
             commands::maps::get_tracker_state,
             commands::maps::get_map_history,
             commands::maps::get_map_stats,
+            commands::maps::get_map_sessions,
+            commands::maps::get_session_detail,
+            commands::maps::set_tracked_character,
             commands::stash::set_session_id,
             commands::stash::get_stash_tabs,
             commands::stash::take_stash_snapshot,

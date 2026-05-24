@@ -1,4 +1,4 @@
-use crate::areas::is_idle_zone;
+use crate::areas::{classify, map_tier, AreaType};
 use crate::parser::LogEvent;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
@@ -14,21 +14,51 @@ pub enum TrackerState {
     InMap {
         map_name: String,
         area_level: Option<u32>,
+        map_tier: Option<u32>,
         started_at: String,
         deaths: u32,
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A league-mechanic encounter detected during a run (raw row; counts and
+/// start/finish pairing are derived on read).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MapEncounter {
+    pub category: String,
+    #[serde(default)]
+    pub detail: Option<String>,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MapRun {
     pub id: Option<i64>,
     pub map_name: String,
+    #[serde(default)]
+    pub area_id: Option<String>,
     pub area_level: Option<u32>,
+    /// `AreaType::as_str()` (map/town/hideout/hub/…).
+    #[serde(default)]
+    pub area_type: Option<String>,
+    #[serde(default)]
+    pub map_tier: Option<u32>,
+    /// Instance endpoint (ip:port) — used to resume a run after a town portal.
+    #[serde(default)]
+    pub instance_id: Option<String>,
+    #[serde(default)]
+    pub league: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<i64>,
     pub started_at: String,
     pub ended_at: String,
     pub duration_secs: f64,
+    /// Idle seconds in town/hideout attributed to this run.
+    #[serde(default)]
+    pub hideout_secs: f64,
     pub deaths: u32,
     pub level_ups: Vec<u32>,
+    #[serde(default)]
+    pub encounters: Vec<MapEncounter>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,57 +69,232 @@ pub struct MapStats {
     pub total_deaths: u32,
 }
 
+/// A farming session: stash snapshot at start and end; profit = end − start;
+/// currency/hour uses *active map time* (sum of run durations, idle excluded).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MapSession {
+    pub id: Option<i64>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub league: Option<String>,
+    pub started_at: String,
+    #[serde(default)]
+    pub ended_at: Option<String>,
+    #[serde(default)]
+    pub start_chaos: Option<f64>,
+    #[serde(default)]
+    pub end_chaos: Option<f64>,
+    #[serde(default)]
+    pub profit_chaos: Option<f64>,
+    /// Sum of run durations in the session (seconds, idle excluded).
+    #[serde(default)]
+    pub active_secs: f64,
+    #[serde(default)]
+    pub notes: Option<String>,
+    /// Derived: number of runs linked to this session.
+    #[serde(default)]
+    pub run_count: u32,
+    /// Derived: profit_chaos ÷ (active_secs / 3600).
+    #[serde(default)]
+    pub chaos_per_hour: Option<f64>,
+}
+
 pub enum StateEvent {
     MapCompleted(MapRun),
     StateChanged(TrackerState),
     Death { map_name: String, total_deaths: u32 },
 }
 
-pub struct StateMachine {
-    inner: InnerState,
-    pending_level: Option<u32>,
+/// In-progress run accumulator (internal).
+#[derive(Clone)]
+struct RunAcc {
+    map_name: String,
+    area_id: Option<String>,
+    area_level: Option<u32>,
+    area_type: AreaType,
+    map_tier: Option<u32>,
+    instance_id: Option<String>,
+    started_at: NaiveDateTime,
+    deaths: u32,
+    level_ups: Vec<u32>,
+    hideout_secs: f64,
+    encounters: Vec<MapEncounter>,
+}
+
+impl RunAcc {
+    fn to_map_run(&self, ended_at: NaiveDateTime, league: Option<String>) -> MapRun {
+        let duration = (ended_at - self.started_at).num_milliseconds().max(0) as f64 / 1000.0;
+        MapRun {
+            id: None,
+            map_name: self.map_name.clone(),
+            area_id: self.area_id.clone(),
+            area_level: self.area_level,
+            area_type: Some(self.area_type.as_str().to_string()),
+            map_tier: self.map_tier,
+            instance_id: self.instance_id.clone(),
+            league,
+            session_id: None,
+            started_at: fmt(self.started_at),
+            ended_at: fmt(ended_at),
+            duration_secs: duration,
+            hideout_secs: self.hideout_secs,
+            deaths: self.deaths,
+            level_ups: self.level_ups.clone(),
+            encounters: self.encounters.clone(),
+        }
+    }
 }
 
 enum InnerState {
     Idle {
+        /// When we became idle (town/hideout entry) — also the suspended run's end time.
         since: NaiveDateTime,
         zone_name: String,
+        /// A run paused when we stepped into town/hideout; resumed if we return to the same instance.
+        suspended: Option<RunAcc>,
     },
     InMap {
-        map_name: String,
-        area_level: Option<u32>,
-        started_at: NaiveDateTime,
-        deaths: u32,
-        level_ups: Vec<u32>,
+        run: RunAcc,
     },
+}
+
+pub struct StateMachine {
+    inner: InnerState,
+    pending_level: Option<u32>,
+    pending_area_id: Option<String>,
+    /// Most recent `Connecting to instance server at` endpoint, applied to the next area.
+    current_instance: Option<String>,
+    league: Option<String>,
+    /// Player's character name; when set, deaths/level-ups are attributed only to it.
+    character: Option<String>,
+    afk: bool,
+}
+
+fn fmt(t: NaiveDateTime) -> String {
+    t.format("%Y-%m-%dT%H:%M:%S").to_string()
+}
+
+fn is_idle_type(t: AreaType) -> bool {
+    matches!(t, AreaType::Town | AreaType::Hideout | AreaType::Hub)
+}
+
+/// Is this the same run we're resuming? Prefer instance endpoint, then area id, then name.
+fn same_run(run: &RunAcc, area_id: Option<&str>, area_name: &str, endpoint: Option<&str>) -> bool {
+    if let (Some(a), Some(b)) = (run.instance_id.as_deref(), endpoint) {
+        return a == b;
+    }
+    if let (Some(a), Some(b)) = (run.area_id.as_deref(), area_id) {
+        return a == b;
+    }
+    run.map_name == area_name
 }
 
 impl StateMachine {
     pub fn new(now: NaiveDateTime) -> Self {
         Self {
-            inner: InnerState::Idle { since: now, zone_name: "Unknown".into() },
+            inner: InnerState::Idle {
+                since: now,
+                zone_name: "Unknown".into(),
+                suspended: None,
+            },
             pending_level: None,
+            pending_area_id: None,
+            current_instance: None,
+            league: None,
+            character: None,
+            afk: false,
         }
+    }
+
+    pub fn set_league(&mut self, league: Option<String>) {
+        self.league = league;
+    }
+
+    pub fn set_character(&mut self, character: Option<String>) {
+        self.character = character;
     }
 
     pub fn state(&self) -> TrackerState {
         match &self.inner {
-            InnerState::Idle { since, zone_name } => TrackerState::Idle {
-                since: since.format("%Y-%m-%dT%H:%M:%S").to_string(),
+            InnerState::Idle {
+                since, zone_name, ..
+            } => TrackerState::Idle {
+                since: fmt(*since),
                 zone_name: zone_name.clone(),
             },
-            InnerState::InMap {
-                map_name,
-                area_level,
-                started_at,
-                deaths,
-                ..
-            } => TrackerState::InMap {
-                map_name: map_name.clone(),
-                area_level: *area_level,
-                started_at: started_at.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                deaths: *deaths,
+            InnerState::InMap { run } => TrackerState::InMap {
+                map_name: run.map_name.clone(),
+                area_level: run.area_level,
+                map_tier: run.map_tier,
+                started_at: fmt(run.started_at),
+                deaths: run.deaths,
             },
+        }
+    }
+
+    fn new_run(
+        &self,
+        area_name: String,
+        area_id: Option<String>,
+        area_level: Option<u32>,
+        atype: AreaType,
+        endpoint: Option<String>,
+        started_at: NaiveDateTime,
+    ) -> RunAcc {
+        let map_tier = if atype == AreaType::Map {
+            area_level.and_then(map_tier)
+        } else {
+            None
+        };
+        RunAcc {
+            map_name: area_name,
+            area_id,
+            area_level,
+            area_type: atype,
+            map_tier,
+            instance_id: endpoint,
+            started_at,
+            deaths: 0,
+            level_ups: Vec::new(),
+            hideout_secs: 0.0,
+            encounters: Vec::new(),
+        }
+    }
+
+    fn is_player(&self, character: Option<&str>) -> bool {
+        match (&self.character, character) {
+            (Some(p), Some(c)) => p == c,
+            (Some(_), None) => false,
+            (None, _) => true, // no character configured → count all (solo-accurate)
+        }
+    }
+
+    /// Force-complete the current or suspended run (called on session-end / tracker stop).
+    pub fn finalize_current(&mut self, now: NaiveDateTime) -> Option<MapRun> {
+        let prev = std::mem::replace(
+            &mut self.inner,
+            InnerState::Idle {
+                since: now,
+                zone_name: "Unknown".into(),
+                suspended: None,
+            },
+        );
+        match prev {
+            InnerState::InMap { run } => Some(run.to_map_run(now, self.league.clone())),
+            InnerState::Idle {
+                since,
+                zone_name,
+                suspended,
+            } => {
+                let completed = suspended.map(|run| run.to_map_run(since, self.league.clone()));
+                self.inner = InnerState::Idle {
+                    since,
+                    zone_name,
+                    suspended: None,
+                };
+                completed
+            }
         }
     }
 
@@ -97,112 +302,177 @@ impl StateMachine {
         let mut events = Vec::new();
 
         match event {
-            LogEvent::AreaLevelHint { area_level, .. } => {
-                // Stash the level for the next AreaChange, or apply to current map
-                match &mut self.inner {
-                    InnerState::InMap { area_level: lvl, .. } if lvl.is_none() => {
-                        *lvl = Some(area_level);
+            LogEvent::AreaLevelHint {
+                area_level,
+                area_id,
+                ..
+            } => {
+                self.pending_level = Some(area_level);
+                self.pending_area_id = Some(area_id);
+                // If already in a map whose level is unknown, backfill it.
+                if let InnerState::InMap { ref mut run } = self.inner {
+                    if run.area_level.is_none() {
+                        run.area_level = Some(area_level);
+                        if run.area_type == AreaType::Map && run.map_tier.is_none() {
+                            run.map_tier = map_tier(area_level);
+                        }
                         events.push(StateEvent::StateChanged(self.state()));
                     }
-                    _ => {
-                        self.pending_level = Some(area_level);
-                    }
                 }
+            }
+            LogEvent::InstanceConnected { endpoint, .. } => {
+                self.current_instance = Some(endpoint);
+            }
+            LogEvent::Afk { on, .. } => {
+                self.afk = on;
             }
             LogEvent::AreaChange {
                 timestamp,
                 area_name,
             } => {
+                let area_id = self.pending_area_id.take();
                 let area_level = self.pending_level.take();
+                let atype = classify(area_id.as_deref(), &area_name);
+                let endpoint = self.current_instance.clone();
 
-                if is_idle_zone(&area_name) {
-                    if let InnerState::InMap {
-                        ref map_name,
-                        area_level,
-                        started_at,
-                        deaths,
-                        ref level_ups,
-                    } = self.inner
-                    {
-                        let duration = (timestamp - started_at).num_milliseconds() as f64 / 1000.0;
-                        let run = MapRun {
-                            id: None,
-                            map_name: map_name.clone(),
-                            area_level,
-                            started_at: started_at.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                            ended_at: timestamp.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                            duration_secs: duration,
-                            deaths,
-                            level_ups: level_ups.clone(),
-                        };
-                        events.push(StateEvent::MapCompleted(run));
-                    }
-                    self.inner = InnerState::Idle { since: timestamp, zone_name: area_name };
+                if is_idle_type(atype) {
+                    // Entering town/hideout/hub: suspend the run (do NOT complete it yet).
+                    let prev = std::mem::replace(
+                        &mut self.inner,
+                        InnerState::Idle {
+                            since: timestamp,
+                            zone_name: area_name.clone(),
+                            suspended: None,
+                        },
+                    );
+                    self.inner = match prev {
+                        InnerState::InMap { run } => InnerState::Idle {
+                            since: timestamp,
+                            zone_name: area_name,
+                            suspended: Some(run),
+                        },
+                        // Already idle: keep the earliest `since` and the suspended run.
+                        InnerState::Idle {
+                            since, suspended, ..
+                        } => InnerState::Idle {
+                            since,
+                            zone_name: area_name,
+                            suspended,
+                        },
+                    };
+                    events.push(StateEvent::StateChanged(self.state()));
                 } else {
-                    if let InnerState::InMap {
-                        ref map_name,
-                        area_level: prev_level,
-                        started_at,
-                        deaths,
-                        ref level_ups,
-                    } = self.inner
-                    {
-                        if *map_name != area_name {
-                            let duration =
-                                (timestamp - started_at).num_milliseconds() as f64 / 1000.0;
-                            let run = MapRun {
-                                id: None,
-                                map_name: map_name.clone(),
-                                area_level: prev_level,
-                                started_at: started_at.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                                ended_at: timestamp.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                                duration_secs: duration,
-                                deaths,
-                                level_ups: level_ups.clone(),
-                            };
-                            events.push(StateEvent::MapCompleted(run));
-                            self.inner = InnerState::InMap {
-                                map_name: area_name,
-                                area_level,
-                                started_at: timestamp,
-                                deaths: 0,
-                                level_ups: Vec::new(),
-                            };
+                    // Entering a non-idle area (a map, or a sub-area like Vaal/lab/abyss).
+                    let prev = std::mem::replace(
+                        &mut self.inner,
+                        InnerState::Idle {
+                            since: timestamp,
+                            zone_name: String::new(),
+                            suspended: None,
+                        },
+                    );
+                    match prev {
+                        InnerState::Idle {
+                            since, suspended, ..
+                        } => {
+                            if let Some(mut run) = suspended {
+                                if same_run(&run, area_id.as_deref(), &area_name, endpoint.as_deref())
+                                {
+                                    // Returned to the same instance after a town trip → resume.
+                                    run.hideout_secs +=
+                                        (timestamp - since).num_milliseconds().max(0) as f64 / 1000.0;
+                                    self.inner = InnerState::InMap { run };
+                                } else {
+                                    // Moved on to a different map → finalize the suspended run.
+                                    events.push(StateEvent::MapCompleted(
+                                        run.to_map_run(since, self.league.clone()),
+                                    ));
+                                    self.inner = InnerState::InMap {
+                                        run: self.new_run(
+                                            area_name, area_id, area_level, atype, endpoint,
+                                            timestamp,
+                                        ),
+                                    };
+                                }
+                            } else {
+                                self.inner = InnerState::InMap {
+                                    run: self.new_run(
+                                        area_name, area_id, area_level, atype, endpoint, timestamp,
+                                    ),
+                                };
+                            }
                         }
-                    } else {
-                        self.inner = InnerState::InMap {
-                            map_name: area_name,
-                            area_level,
-                            started_at: timestamp,
-                            deaths: 0,
-                            level_ups: Vec::new(),
-                        };
+                        InnerState::InMap { run } => {
+                            if atype == AreaType::Map {
+                                if same_run(&run, area_id.as_deref(), &area_name, endpoint.as_deref())
+                                {
+                                    // Re-entered the same map (no town between) → ignore.
+                                    self.inner = InnerState::InMap { run };
+                                } else {
+                                    events.push(StateEvent::MapCompleted(
+                                        run.to_map_run(timestamp, self.league.clone()),
+                                    ));
+                                    self.inner = InnerState::InMap {
+                                        run: self.new_run(
+                                            area_name, area_id, area_level, atype, endpoint,
+                                            timestamp,
+                                        ),
+                                    };
+                                }
+                            } else {
+                                // Sub-area (Vaal side area, lab trial, abyssal depths, …):
+                                // stay in the current run.
+                                self.inner = InnerState::InMap { run };
+                            }
+                        }
+                    }
+                    events.push(StateEvent::StateChanged(self.state()));
+                }
+            }
+            LogEvent::Death { character, .. } => {
+                if self.is_player(character.as_deref()) {
+                    if let InnerState::InMap { ref mut run } = self.inner {
+                        run.deaths += 1;
+                        events.push(StateEvent::Death {
+                            map_name: run.map_name.clone(),
+                            total_deaths: run.deaths,
+                        });
+                        events.push(StateEvent::StateChanged(self.state()));
                     }
                 }
-                events.push(StateEvent::StateChanged(self.state()));
             }
-            LogEvent::Death { .. } => {
-                if let InnerState::InMap {
-                    ref map_name,
-                    ref mut deaths,
-                    ..
-                } = self.inner
-                {
-                    *deaths += 1;
-                    events.push(StateEvent::Death {
-                        map_name: map_name.clone(),
-                        total_deaths: *deaths,
-                    });
-                    events.push(StateEvent::StateChanged(self.state()));
+            LogEvent::LevelUp {
+                level, character, ..
+            } => {
+                if self.is_player(character.as_deref()) {
+                    if let InnerState::InMap { ref mut run } = self.inner {
+                        run.level_ups.push(level);
+                        events.push(StateEvent::StateChanged(self.state()));
+                    }
                 }
             }
-            LogEvent::LevelUp { level, .. } => {
-                if let InnerState::InMap {
-                    ref mut level_ups, ..
-                } = self.inner
-                {
-                    level_ups.push(level);
-                    events.push(StateEvent::StateChanged(self.state()));
+            LogEvent::NpcLine {
+                npc,
+                text,
+                timestamp,
+            } => {
+                if let InnerState::InMap { ref mut run } = self.inner {
+                    if let Some((def, specific)) = crate::encounters::match_encounter(&npc, &text) {
+                        // Presence (by_npc) is recorded once per category; specific
+                        // (by_quote) events are always recorded.
+                        let dup = !specific
+                            && run
+                                .encounters
+                                .iter()
+                                .any(|e| e.category == def.category && e.detail == def.detail);
+                        if !dup {
+                            run.encounters.push(MapEncounter {
+                                category: def.category,
+                                detail: def.detail,
+                                timestamp: fmt(timestamp),
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -225,10 +495,22 @@ mod tests {
             .unwrap()
     }
 
-    fn enter_map(sm: &mut StateMachine, time: u32, name: &str, level: u32) -> Vec<StateEvent> {
+    /// Enter a map with an explicit instance endpoint (full sequence: connect → generate → enter).
+    fn enter_map_inst(
+        sm: &mut StateMachine,
+        time: u32,
+        name: &str,
+        level: u32,
+        endpoint: &str,
+    ) -> Vec<StateEvent> {
+        sm.process(LogEvent::InstanceConnected {
+            timestamp: ts(time),
+            endpoint: endpoint.into(),
+        });
         sm.process(LogEvent::AreaLevelHint {
             timestamp: ts(time),
             area_level: level,
+            area_id: format!("MapWorlds{name}"),
         });
         sm.process(LogEvent::AreaChange {
             timestamp: ts(time + 1),
@@ -236,85 +518,212 @@ mod tests {
         })
     }
 
-    #[test]
-    fn idle_to_map_to_idle() {
-        let mut sm = StateMachine::new(ts(0));
+    fn enter_map(sm: &mut StateMachine, time: u32, name: &str, level: u32) -> Vec<StateEvent> {
+        enter_map_inst(sm, time, name, level, &format!("10.0.0.{time}:6112"))
+    }
 
-        let evts = enter_map(&mut sm, 10, "Strand", 83);
-        assert!(matches!(sm.state(), TrackerState::InMap { .. }));
-        assert!(evts.iter().any(|e| matches!(e, StateEvent::StateChanged(_))));
-
-        let evts = sm.process(LogEvent::AreaChange {
-            timestamp: ts(120),
-            area_name: "Hideout".into(),
+    fn enter_hideout(sm: &mut StateMachine, time: u32, endpoint: &str) -> Vec<StateEvent> {
+        sm.process(LogEvent::InstanceConnected {
+            timestamp: ts(time),
+            endpoint: endpoint.into(),
         });
+        sm.process(LogEvent::AreaChange {
+            timestamp: ts(time),
+            area_name: "Hideout".into(),
+        })
+    }
+
+    fn completed(evts: &[StateEvent]) -> Vec<&MapRun> {
+        evts.iter()
+            .filter_map(|e| match e {
+                StateEvent::MapCompleted(run) => Some(run),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn enter_map_sets_type_and_tier() {
+        let mut sm = StateMachine::new(ts(0));
+        enter_map(&mut sm, 10, "Strand", 83);
+        match sm.state() {
+            TrackerState::InMap {
+                area_level,
+                map_tier,
+                ..
+            } => {
+                assert_eq!(area_level, Some(83));
+                assert_eq!(map_tier, Some(16));
+            }
+            _ => panic!("expected InMap"),
+        }
+    }
+
+    #[test]
+    fn entering_hideout_suspends_not_completes() {
+        let mut sm = StateMachine::new(ts(0));
+        enter_map(&mut sm, 10, "Strand", 83);
+        let evts = enter_hideout(&mut sm, 120, "10.0.0.250:6112");
+        assert!(completed(&evts).is_empty(), "town entry must not complete a run");
         assert!(matches!(sm.state(), TrackerState::Idle { .. }));
-        let completed: Vec<_> = evts
-            .iter()
-            .filter_map(|e| match e {
-                StateEvent::MapCompleted(run) => Some(run),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(completed.len(), 1);
-        assert_eq!(completed[0].map_name, "Strand");
-        assert_eq!(completed[0].area_level, Some(83));
     }
 
     #[test]
-    fn death_increments() {
+    fn town_portal_resumes_same_instance() {
         let mut sm = StateMachine::new(ts(0));
-        enter_map(&mut sm, 10, "Strand", 83);
+        enter_map_inst(&mut sm, 10, "Strand", 83, "1.1.1.1:6112");
+        enter_hideout(&mut sm, 120, "9.9.9.9:6112");
+        // Reconnect to the ORIGINAL map instance, then re-enter Strand → resume (no completion).
+        sm.process(LogEvent::InstanceConnected {
+            timestamp: ts(180),
+            endpoint: "1.1.1.1:6112".into(),
+        });
+        let evts = sm.process(LogEvent::AreaChange {
+            timestamp: ts(181),
+            area_name: "Strand".into(),
+        });
+        assert!(completed(&evts).is_empty(), "resume must not complete a run");
+        assert!(matches!(sm.state(), TrackerState::InMap { .. }));
 
-        let evts = sm.process(LogEvent::Death { timestamp: ts(30) });
-        assert!(evts.iter().any(|e| matches!(e, StateEvent::Death { total_deaths: 1, .. })));
-
-        let evts = sm.process(LogEvent::Death { timestamp: ts(40) });
-        assert!(evts.iter().any(|e| matches!(e, StateEvent::Death { total_deaths: 2, .. })));
+        let run = sm.finalize_current(ts(241)).unwrap();
+        assert!(
+            run.hideout_secs >= 59.0,
+            "idle time should be attributed: {}",
+            run.hideout_secs
+        );
     }
 
     #[test]
-    fn map_to_different_map() {
+    fn new_map_after_town_completes_previous() {
         let mut sm = StateMachine::new(ts(0));
-        enter_map(&mut sm, 10, "Strand", 83);
-
-        let evts = enter_map(&mut sm, 60, "Atoll", 81);
-
-        let completed: Vec<_> = evts
-            .iter()
-            .filter_map(|e| match e {
-                StateEvent::MapCompleted(run) => Some(run),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(completed.len(), 1);
-        assert_eq!(completed[0].map_name, "Strand");
-
+        enter_map_inst(&mut sm, 10, "Strand", 83, "1.1.1.1:6112");
+        enter_hideout(&mut sm, 120, "9.9.9.9:6112");
+        let evts = enter_map_inst(&mut sm, 180, "Atoll", 81, "2.2.2.2:6112");
+        let done = completed(&evts);
+        assert_eq!(done.len(), 1);
+        assert_eq!(done[0].map_name, "Strand");
+        assert_eq!(done[0].area_type.as_deref(), Some("map"));
         assert!(matches!(sm.state(), TrackerState::InMap { map_name, .. } if map_name == "Atoll"));
+    }
+
+    #[test]
+    fn direct_map_to_map_completes_previous() {
+        let mut sm = StateMachine::new(ts(0));
+        enter_map(&mut sm, 10, "Strand", 83);
+        let evts = enter_map(&mut sm, 60, "Atoll", 81);
+        let done = completed(&evts);
+        assert_eq!(done.len(), 1);
+        assert_eq!(done[0].map_name, "Strand");
     }
 
     #[test]
     fn same_map_reentry_ignored() {
         let mut sm = StateMachine::new(ts(0));
-        enter_map(&mut sm, 10, "Strand", 83);
-
+        enter_map_inst(&mut sm, 10, "Strand", 83, "1.1.1.1:6112");
         let evts = sm.process(LogEvent::AreaChange {
             timestamp: ts(30),
             area_name: "Strand".into(),
         });
-
-        assert!(!evts.iter().any(|e| matches!(e, StateEvent::MapCompleted(_))));
+        assert!(completed(&evts).is_empty());
         assert!(matches!(sm.state(), TrackerState::InMap { .. }));
     }
 
     #[test]
-    fn area_level_hint_applied() {
+    fn subarea_does_not_split_run() {
+        let mut sm = StateMachine::new(ts(0));
+        enter_map(&mut sm, 10, "Strand", 83);
+        // A Vaal side area: generated with a non-map id → classified non-Map → stays in run.
+        sm.process(LogEvent::AreaLevelHint {
+            timestamp: ts(40),
+            area_level: 83,
+            area_id: "VaalCity".into(),
+        });
+        let evts = sm.process(LogEvent::AreaChange {
+            timestamp: ts(41),
+            area_name: "Vaal City".into(),
+        });
+        assert!(completed(&evts).is_empty());
+        assert!(matches!(sm.state(), TrackerState::InMap { map_name, .. } if map_name == "Strand"));
+    }
+
+    #[test]
+    fn hub_area_is_not_a_run() {
+        let mut sm = StateMachine::new(ts(0));
+        // Azurite Mine (Delve hub) must be idle, not a map run.
+        sm.process(LogEvent::AreaChange {
+            timestamp: ts(10),
+            area_name: "Azurite Mine".into(),
+        });
+        assert!(matches!(sm.state(), TrackerState::Idle { .. }));
+    }
+
+    #[test]
+    fn death_increments_and_attribution() {
         let mut sm = StateMachine::new(ts(0));
         enter_map(&mut sm, 10, "Strand", 83);
 
-        match sm.state() {
-            TrackerState::InMap { area_level, .. } => assert_eq!(area_level, Some(83)),
-            _ => panic!("expected InMap"),
-        }
+        let evts = sm.process(LogEvent::Death {
+            timestamp: ts(30),
+            character: Some("Me".into()),
+        });
+        assert!(evts
+            .iter()
+            .any(|e| matches!(e, StateEvent::Death { total_deaths: 1, .. })));
+
+        // With a configured character, other players' deaths are ignored.
+        sm.set_character(Some("Me".into()));
+        let evts = sm.process(LogEvent::Death {
+            timestamp: ts(40),
+            character: Some("SomeoneElse".into()),
+        });
+        assert!(!evts.iter().any(|e| matches!(e, StateEvent::Death { .. })));
+
+        let evts = sm.process(LogEvent::Death {
+            timestamp: ts(45),
+            character: Some("Me".into()),
+        });
+        assert!(evts
+            .iter()
+            .any(|e| matches!(e, StateEvent::Death { total_deaths: 2, .. })));
+    }
+
+    #[test]
+    fn finalize_current_completes_open_run() {
+        let mut sm = StateMachine::new(ts(0));
+        enter_map(&mut sm, 10, "Strand", 83);
+        let run = sm.finalize_current(ts(130)).unwrap();
+        assert_eq!(run.map_name, "Strand");
+        assert!(run.duration_secs > 0.0);
+        assert!(matches!(sm.state(), TrackerState::Idle { .. }));
+    }
+
+    #[test]
+    fn npc_line_records_encounter_presence_once() {
+        let mut sm = StateMachine::new(ts(0));
+        enter_map(&mut sm, 10, "Strand", 83);
+        // Two Niko lines in the same map → one Delve presence row.
+        sm.process(LogEvent::NpcLine {
+            timestamp: ts(20),
+            npc: "Niko, Master of the Depths".into(),
+            text: "Food for the machine, heheh!".into(),
+        });
+        sm.process(LogEvent::NpcLine {
+            timestamp: ts(25),
+            npc: "Niko, Master of the Depths".into(),
+            text: "Plenty more sulphite where that came from.".into(),
+        });
+        // A specific beast-capture quote → its own detail row.
+        sm.process(LogEvent::NpcLine {
+            timestamp: ts(30),
+            npc: "Einhar, Beastmaster".into(),
+            text: "Haha! You are captured, stupid beast.".into(),
+        });
+        let run = sm.finalize_current(ts(130)).unwrap();
+        let delve = run.encounters.iter().filter(|e| e.category == "Delve").count();
+        assert_eq!(delve, 1, "presence recorded once per category");
+        assert!(run
+            .encounters
+            .iter()
+            .any(|e| e.category == "Bestiary" && e.detail.as_deref() == Some("yellow")));
     }
 }

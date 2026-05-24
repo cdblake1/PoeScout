@@ -1,27 +1,28 @@
-use crate::parser::parse_line;
-use crate::state::{StateEvent, StateMachine};
+use crate::parser::{parse_line, LogEvent};
 use anyhow::Result;
 use std::path::PathBuf;
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
 
+/// Tail Client.txt and forward parsed [`LogEvent`]s. The state machine lives in
+/// `MapTracker` (so it can be driven and finalized from the command layer).
 pub async fn watch_client_txt(
     path: PathBuf,
-    event_tx: mpsc::UnboundedSender<StateEvent>,
+    event_tx: mpsc::UnboundedSender<LogEvent>,
     mut cancel: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     use tokio::io::BufReader;
 
-    // Open file and seek to end
     let file = tokio::fs::File::open(&path).await?;
     let metadata = file.metadata().await?;
     let mut last_size = metadata.len();
     let mut position = last_size;
 
-    tracing::info!("Watching Client.txt at {:?}, starting at byte {}", path, position);
-
-    let now = chrono::Local::now().naive_local();
-    let mut state_machine = StateMachine::new(now);
+    tracing::info!(
+        "Watching Client.txt at {:?}, starting at byte {}",
+        path,
+        position
+    );
 
     loop {
         tokio::select! {
@@ -32,7 +33,6 @@ pub async fn watch_client_txt(
                 }
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
-                // Check file size for truncation
                 let file = match tokio::fs::File::open(&path).await {
                     Ok(f) => f,
                     Err(e) => {
@@ -53,11 +53,9 @@ pub async fn watch_client_txt(
                     continue;
                 }
 
-                // Read new content
                 let file = tokio::fs::File::open(&path).await?;
                 let mut reader = BufReader::new(file);
 
-                // Seek to position
                 use tokio::io::AsyncSeekExt;
                 reader.seek(std::io::SeekFrom::Start(position)).await?;
 
@@ -71,12 +69,9 @@ pub async fn watch_client_txt(
                     position += bytes_read as u64;
 
                     if let Some(event) = parse_line(line.trim()) {
-                        let state_events = state_machine.process(event);
-                        for se in state_events {
-                            if event_tx.send(se).is_err() {
-                                tracing::info!("Event channel closed");
-                                return Ok(());
-                            }
+                        if event_tx.send(event).is_err() {
+                            tracing::info!("Event channel closed");
+                            return Ok(());
                         }
                     }
                 }
