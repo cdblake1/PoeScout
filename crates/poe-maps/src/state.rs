@@ -30,6 +30,17 @@ pub struct MapEncounter {
     pub timestamp: String,
 }
 
+/// A priced loot line for a run (from the per-map inventory diff, 6.3).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LootItem {
+    pub name: String,
+    pub type_line: String,
+    pub stack_size: u32,
+    pub unit_chaos: Option<f64>,
+    pub total_chaos: Option<f64>,
+    pub frame_type: Option<u32>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MapRun {
     pub id: Option<i64>,
@@ -59,6 +70,10 @@ pub struct MapRun {
     pub level_ups: Vec<u32>,
     #[serde(default)]
     pub encounters: Vec<MapEncounter>,
+    /// Total chaos value of loot from this run (set post-completion by the
+    /// inventory-diff pricing in 6.3b; None until then).
+    #[serde(default)]
+    pub loot_chaos: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,6 +157,7 @@ impl RunAcc {
             deaths: self.deaths,
             level_ups: self.level_ups.clone(),
             encounters: self.encounters.clone(),
+            loot_chaos: None,
         }
     }
 }

@@ -211,6 +211,16 @@ export interface MapRun {
   deaths: number;
   level_ups: number[];
   encounters: MapEncounter[];
+  loot_chaos: number | null;
+}
+
+export interface LootItem {
+  name: string;
+  type_line: string;
+  stack_size: number;
+  unit_chaos: number | null;
+  total_chaos: number | null;
+  frame_type: number | null;
 }
 
 export interface MapStats {

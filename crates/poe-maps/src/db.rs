@@ -1,4 +1,4 @@
-use crate::state::{MapEncounter, MapRun, MapSession, MapStats};
+use crate::state::{LootItem, MapEncounter, MapRun, MapSession, MapStats};
 use anyhow::Result;
 use rusqlite::Connection;
 use std::path::Path;
@@ -76,6 +76,25 @@ impl MapDb {
             )?;
         }
 
+        // v2 — Phase 6.3: per-map loot.
+        if version < 2 {
+            conn.execute_batch(
+                "ALTER TABLE map_runs ADD COLUMN loot_chaos REAL;
+                 CREATE TABLE IF NOT EXISTS loot_items (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     run_id INTEGER NOT NULL REFERENCES map_runs(id),
+                     name TEXT NOT NULL,
+                     type_line TEXT,
+                     stack_size INTEGER NOT NULL DEFAULT 1,
+                     unit_chaos REAL,
+                     total_chaos REAL,
+                     frame_type INTEGER
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_loot_items_run ON loot_items(run_id);
+                 PRAGMA user_version = 2;",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -138,7 +157,8 @@ impl MapDb {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, map_name, area_id, area_level, area_type, map_tier, instance_id, league,
-                    session_id, started_at, ended_at, duration_secs, hideout_secs, deaths, level_ups
+                    session_id, started_at, ended_at, duration_secs, hideout_secs, deaths, level_ups,
+                    loot_chaos
              FROM map_runs ORDER BY started_at DESC LIMIT ?1 OFFSET ?2",
         )?;
         let rows = stmt.query_map(rusqlite::params![limit, offset], |row| {
@@ -162,6 +182,7 @@ impl MapDb {
                 deaths: row.get(13)?,
                 level_ups,
                 encounters: Vec::new(),
+                loot_chaos: row.get(15)?,
             })
         })?;
         let mut runs = Vec::new();
@@ -336,7 +357,8 @@ impl MapDb {
         let mut runs = {
             let mut stmt = conn.prepare(
                 "SELECT id, map_name, area_id, area_level, area_type, map_tier, instance_id, league,
-                        session_id, started_at, ended_at, duration_secs, hideout_secs, deaths, level_ups
+                        session_id, started_at, ended_at, duration_secs, hideout_secs, deaths, level_ups,
+                        loot_chaos
                  FROM map_runs WHERE session_id = ?1 ORDER BY started_at DESC",
             )?;
             let rows = stmt.query_map([session_id], |row| {
@@ -359,6 +381,7 @@ impl MapDb {
                     deaths: row.get(13)?,
                     level_ups,
                     encounters: Vec::new(),
+                    loot_chaos: row.get(15)?,
                 })
             })?;
             let mut v = Vec::new();
@@ -381,6 +404,55 @@ impl MapDb {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch("DELETE FROM map_encounters; DELETE FROM map_runs;")?;
         Ok(())
+    }
+
+    /// Attach priced loot to a completed run (6.3): set its total and insert lines.
+    pub fn set_run_loot(&self, run_id: i64, loot_chaos: f64, items: &[LootItem]) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE map_runs SET loot_chaos = ?2 WHERE id = ?1",
+            rusqlite::params![run_id, loot_chaos],
+        )?;
+        for it in items {
+            conn.execute(
+                "INSERT INTO loot_items
+                    (run_id, name, type_line, stack_size, unit_chaos, total_chaos, frame_type)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    run_id,
+                    it.name,
+                    it.type_line,
+                    it.stack_size,
+                    it.unit_chaos,
+                    it.total_chaos,
+                    it.frame_type,
+                ],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn get_run_loot(&self, run_id: i64) -> Result<Vec<LootItem>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT name, type_line, stack_size, unit_chaos, total_chaos, frame_type
+             FROM loot_items WHERE run_id = ?1 ORDER BY total_chaos DESC",
+        )?;
+        let rows = stmt.query_map([run_id], |row| {
+            Ok(LootItem {
+                name: row.get(0)?,
+                type_line: row.get(1)?,
+                stack_size: row.get(2)?,
+                unit_chaos: row.get(3)?,
+                total_chaos: row.get(4)?,
+                frame_type: row.get(5)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
     }
 }
 
@@ -683,5 +755,44 @@ mod tests {
 
         db.clear_history().unwrap();
         assert_eq!(db.get_history(10, 0).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn run_loot_roundtrip() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        let id = db.insert_map_run(&test_run()).unwrap();
+
+        let items = vec![
+            LootItem {
+                name: "Divine Orb".into(),
+                type_line: "Divine Orb".into(),
+                stack_size: 1,
+                unit_chaos: Some(200.0),
+                total_chaos: Some(200.0),
+                frame_type: Some(5),
+            },
+            LootItem {
+                name: "Chaos Orb".into(),
+                type_line: "Chaos Orb".into(),
+                stack_size: 10,
+                unit_chaos: Some(1.0),
+                total_chaos: Some(10.0),
+                frame_type: Some(5),
+            },
+        ];
+        db.set_run_loot(id, 210.0, &items).unwrap();
+
+        let loot = db.get_run_loot(id).unwrap();
+        assert_eq!(loot.len(), 2);
+        assert_eq!(loot[0].name, "Divine Orb"); // ordered by total_chaos DESC
+
+        let run = db
+            .get_history(10, 0)
+            .unwrap()
+            .into_iter()
+            .find(|r| r.id == Some(id))
+            .unwrap();
+        assert_eq!(run.loot_chaos, Some(210.0));
     }
 }
