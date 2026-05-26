@@ -1,5 +1,6 @@
 import { Component, createSignal, onMount, onCleanup, For, Show } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
+import Sparkline from "./Sparkline";
 import {
   getTrackerState,
   getMapHistory,
@@ -216,6 +217,26 @@ const MapTimer: Component = () => {
             <div class="text-poe-muted text-xs">Deaths</div>
             <div class="text-lg font-bold text-red-400">{stats().total_deaths}</div>
           </div>
+        </div>
+      </Show>
+
+      {/* Trends */}
+      <Show when={history().length > 1 || sessions().some((s) => s.chaos_per_hour != null)}>
+        <div class="bg-poe-surface border border-poe-border rounded p-3 grid grid-cols-2 gap-4">
+          <Sparkline
+            data={history().slice(0, 30).reverse().map((r) => r.duration_secs)}
+            label={`Run duration — last ${Math.min(history().length, 30)} (oldest → newest)`}
+            color="#5fb3ff"
+          />
+          <Sparkline
+            data={sessions()
+              .filter((s) => s.chaos_per_hour != null)
+              .slice(0, 20)
+              .reverse()
+              .map((s) => s.chaos_per_hour!)}
+            label="Currency/hour — by session (oldest → newest)"
+            color="#7fd97f"
+          />
         </div>
       </Show>
 
