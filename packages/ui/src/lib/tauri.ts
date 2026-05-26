@@ -412,6 +412,8 @@ export interface AppSettings {
   min_chaos?: number;
   character?: string;
   session_idle_timeout_secs?: number;
+  /** Per-stack chaos threshold for stash snapshot totals (6.5b noise filter). */
+  min_stack_chaos?: number;
 }
 
 export async function saveSettings(settings: AppSettings): Promise<void> {

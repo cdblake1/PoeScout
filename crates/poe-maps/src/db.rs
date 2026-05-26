@@ -6,6 +6,9 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Mutex;
 
+/// Cap on portfolio_snapshots rows — prune oldest beyond this on each insert (6.5b).
+const PORTFOLIO_SNAPSHOT_RETENTION: u32 = 1000;
+
 pub struct MapDb {
     conn: Mutex<Connection>,
 }
@@ -516,7 +519,18 @@ impl MapDb {
              VALUES (?1, ?2, ?3)",
             rusqlite::params![timestamp, total_chaos, total_divine],
         )?;
-        Ok(conn.last_insert_rowid())
+        let id = conn.last_insert_rowid();
+        // Retention: keep only the most-recent N rows (6.5b).
+        conn.execute(
+            "DELETE FROM portfolio_snapshots
+             WHERE id NOT IN (
+                 SELECT id FROM portfolio_snapshots
+                 ORDER BY timestamp DESC
+                 LIMIT ?1
+             )",
+            [PORTFOLIO_SNAPSHOT_RETENTION],
+        )?;
+        Ok(id)
     }
 
     /// Most recent snapshots, newest first. Reverse on the client for a
@@ -930,5 +944,30 @@ mod tests {
         assert!((snaps[0].total_chaos - 150.0).abs() < 0.001);
         assert!((snaps[0].total_divine - 0.75).abs() < 0.001);
         assert!((snaps[1].total_chaos - 100.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn portfolio_snapshot_retention_caps() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        // Insert beyond the cap; expect prune to keep only the newest N.
+        for i in 0..(PORTFOLIO_SNAPSHOT_RETENTION + 5) {
+            let ts = format!(
+                "2025-01-01T{:02}:{:02}:{:02}",
+                i / 3600,
+                (i / 60) % 60,
+                i % 60
+            );
+            db.insert_portfolio_snapshot(&ts, i as f64, 0.0).unwrap();
+        }
+        let snaps = db.get_portfolio_snapshots(2_000).unwrap();
+        assert!(
+            snaps.len() as u32 <= PORTFOLIO_SNAPSHOT_RETENTION,
+            "retention cap exceeded: {}",
+            snaps.len()
+        );
+        // Newest row preserved (i = N+4).
+        let expected = (PORTFOLIO_SNAPSHOT_RETENTION + 4) as f64;
+        assert!((snaps[0].total_chaos - expected).abs() < 0.001);
     }
 }

@@ -13,6 +13,8 @@ const SettingsPanel: Component = () => {
   const [savedLeague, setSavedLeague] = createSignal("");
   const [character, setCharacter] = createSignal("");
   const [savedCharacter, setSavedCharacter] = createSignal("");
+  const [minStackChaos, setMinStackChaos] = createSignal("0");
+  const [savedMinStackChaos, setSavedMinStackChaos] = createSignal(0);
   const [loading, setLoading] = createSignal(true);
   const [saving, setSaving] = createSignal(false);
   const [status, setStatus] = createSignal("");
@@ -34,6 +36,10 @@ const SettingsPanel: Component = () => {
       const char = settings?.character || "";
       setCharacter(char);
       setSavedCharacter(char);
+
+      const msc = settings?.min_stack_chaos ?? 0;
+      setMinStackChaos(String(msc));
+      setSavedMinStackChaos(msc);
     } catch (e) {
       setStatus(`Failed to load settings: ${e}`);
     } finally {
@@ -46,10 +52,16 @@ const SettingsPanel: Component = () => {
     setStatus("");
     try {
       const char = character().trim();
-      await saveSettings({ league: selectedLeague(), character: char });
+      const msc = Math.max(0, parseFloat(minStackChaos()) || 0);
+      await saveSettings({
+        league: selectedLeague(),
+        character: char,
+        min_stack_chaos: msc,
+      });
       await setTrackedCharacter(char || null);
       setSavedLeague(selectedLeague());
       setSavedCharacter(char);
+      setSavedMinStackChaos(msc);
       setStatus("Settings saved");
     } catch (e) {
       setStatus(`Failed to save: ${e}`);
@@ -59,7 +71,9 @@ const SettingsPanel: Component = () => {
   };
 
   const hasChanges = () =>
-    selectedLeague() !== savedLeague() || character().trim() !== savedCharacter();
+    selectedLeague() !== savedLeague() ||
+    character().trim() !== savedCharacter() ||
+    (Math.max(0, parseFloat(minStackChaos()) || 0) !== savedMinStackChaos());
 
   return (
     <div class="flex flex-col gap-6 max-w-lg">
@@ -95,6 +109,22 @@ const SettingsPanel: Component = () => {
             <p class="text-poe-muted text-xs">
               Attributes deaths and level-ups to you (so party members don't count). Leave blank
               to count everything (solo-accurate). Also used for future "open my character in PoB".
+            </p>
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <label class="text-poe-muted text-sm font-bold">Snapshot noise filter (chaos)</label>
+            <input
+              type="number"
+              min="0"
+              step="0.1"
+              class="px-3 py-2 bg-poe-bg border border-poe-border rounded text-poe-text text-sm font-mono focus:border-poe-accent focus:outline-none"
+              value={minStackChaos()}
+              onInput={(e) => setMinStackChaos(e.currentTarget.value)}
+            />
+            <p class="text-poe-muted text-xs">
+              Stacks worth less than this (in chaos) are excluded from the snapshot total
+              that drives the net-worth chart. Items table still shows everything. 0 = no filter.
             </p>
           </div>
 
