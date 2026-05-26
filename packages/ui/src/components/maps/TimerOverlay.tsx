@@ -28,6 +28,7 @@ const TimerOverlay: Component = () => {
   let focusInterval: number | undefined;
   let unlistenState: (() => void) | undefined;
   let showDebounce: number | undefined;
+  let hideDebounce: number | undefined;
 
   const win = getTimerWindow();
   const overlayWin = getOverlayWindow();
@@ -62,16 +63,17 @@ const TimerOverlay: Component = () => {
 
         const overlayVisible = await overlayWin.isVisible();
 
+        // When the F2 overlay is open, the timer is draggable and always shown.
         if (overlayVisible && inValidZone) {
           if (!draggable()) {
             setDraggable(true);
             await win.setIgnoreCursorEvents(false);
           }
-          if (showDebounce !== undefined) {
-            clearTimeout(showDebounce);
-            showDebounce = undefined;
+          if (showDebounce !== undefined) { clearTimeout(showDebounce); showDebounce = undefined; }
+          if (hideDebounce !== undefined) { clearTimeout(hideDebounce); hideDebounce = undefined; }
+          if (!(await win.isVisible())) {
+            await win.show();
           }
-          await win.show();
           return;
         }
 
@@ -84,20 +86,24 @@ const TimerOverlay: Component = () => {
         const shouldShow = poeFocused && inValidZone;
         const timerVisible = await win.isVisible();
 
-        if (shouldShow && !timerVisible) {
-          if (showDebounce === undefined) {
+        if (shouldShow) {
+          // Cancel a pending hide; debounce the show.
+          if (hideDebounce !== undefined) { clearTimeout(hideDebounce); hideDebounce = undefined; }
+          if (!timerVisible && showDebounce === undefined) {
             showDebounce = window.setTimeout(async () => {
               showDebounce = undefined;
               try { await win.show(); } catch {}
             }, 750);
           }
-        } else if (!shouldShow) {
-          if (showDebounce !== undefined) {
-            clearTimeout(showDebounce);
-            showDebounce = undefined;
-          }
-          if (timerVisible) {
-            await win.hide();
+        } else {
+          // Cancel a pending show; debounce the hide so a transient focus flip
+          // (e.g. a quick alt-tab and back) can't cause show/hide flicker.
+          if (showDebounce !== undefined) { clearTimeout(showDebounce); showDebounce = undefined; }
+          if (timerVisible && hideDebounce === undefined) {
+            hideDebounce = window.setTimeout(async () => {
+              hideDebounce = undefined;
+              try { await win.hide(); } catch {}
+            }, 600);
           }
         }
       } catch {}
@@ -108,6 +114,7 @@ const TimerOverlay: Component = () => {
     if (tickInterval !== undefined) clearInterval(tickInterval);
     if (focusInterval !== undefined) clearInterval(focusInterval);
     if (showDebounce !== undefined) clearTimeout(showDebounce);
+    if (hideDebounce !== undefined) clearTimeout(hideDebounce);
     unlistenState?.();
   });
 

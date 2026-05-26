@@ -4,12 +4,15 @@ import {
   getCurrentLeague,
   loadSettings,
   saveSettings,
+  setTrackedCharacter,
 } from "../../lib/tauri";
 
 const SettingsPanel: Component = () => {
   const [leagues, setLeagues] = createSignal<string[]>([]);
   const [selectedLeague, setSelectedLeague] = createSignal("");
   const [savedLeague, setSavedLeague] = createSignal("");
+  const [character, setCharacter] = createSignal("");
+  const [savedCharacter, setSavedCharacter] = createSignal("");
   const [loading, setLoading] = createSignal(true);
   const [saving, setSaving] = createSignal(false);
   const [status, setStatus] = createSignal("");
@@ -26,7 +29,11 @@ const SettingsPanel: Component = () => {
 
       const league = settings?.league || defaultLeague;
       setSelectedLeague(league);
-      setSavedLeague(settings?.league || "");
+      setSavedLeague(league);
+
+      const char = settings?.character || "";
+      setCharacter(char);
+      setSavedCharacter(char);
     } catch (e) {
       setStatus(`Failed to load settings: ${e}`);
     } finally {
@@ -38,8 +45,11 @@ const SettingsPanel: Component = () => {
     setSaving(true);
     setStatus("");
     try {
-      await saveSettings({ league: selectedLeague() });
+      const char = character().trim();
+      await saveSettings({ league: selectedLeague(), character: char });
+      await setTrackedCharacter(char || null);
       setSavedLeague(selectedLeague());
+      setSavedCharacter(char);
       setStatus("Settings saved");
     } catch (e) {
       setStatus(`Failed to save: ${e}`);
@@ -48,7 +58,8 @@ const SettingsPanel: Component = () => {
     }
   };
 
-  const hasChanges = () => selectedLeague() !== (savedLeague() || selectedLeague());
+  const hasChanges = () =>
+    selectedLeague() !== savedLeague() || character().trim() !== savedCharacter();
 
   return (
     <div class="flex flex-col gap-6 max-w-lg">
@@ -69,6 +80,21 @@ const SettingsPanel: Component = () => {
             </select>
             <p class="text-poe-muted text-xs">
               Used for price lookups and stash tracking. Defaults to the current softcore challenge league.
+            </p>
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <label class="text-poe-muted text-sm font-bold">Character</label>
+            <input
+              type="text"
+              class="px-3 py-2 bg-poe-bg border border-poe-border rounded text-poe-text text-sm font-mono focus:border-poe-accent focus:outline-none"
+              placeholder="Your character name"
+              value={character()}
+              onInput={(e) => setCharacter(e.currentTarget.value)}
+            />
+            <p class="text-poe-muted text-xs">
+              Attributes deaths and level-ups to you (so party members don't count). Leave blank
+              to count everything (solo-accurate). Also used for future "open my character in PoB".
             </p>
           </div>
 

@@ -37,3 +37,7 @@ See `PLAN.md` for the checklist roadmap. Update checkboxes when work is complete
 
 ## Changelog
 See `CHANGELOG.md` — update with every change (use Keep a Changelog format).
+
+## Working Rules (for the agent)
+- **Research agents → Sonnet.** Spawn research/summarization sub-agents (reading source, web research, codebase surveys) with the Sonnet model, not Opus — much cheaper for read-and-summarize work. Reserve Opus for the main thread and hard reasoning/implementation.
+- **Test eval at every stopping point.** When wrapping up a chunk of work, evaluate and report what needs **unit**, **integration**, and **manual** testing — clearly separating what's already covered from what the user must run by hand (e.g. flows needing the live game + GGG credentials). **Commit** the work before planning/writing that eval.

@@ -4,3 +4,6 @@ dist/
 data/
 .env
 *.log
+
+# Personal Claude Code settings (per-user, not team-wide)
+.claude/settings.local.json

@@ -1,0 +1,13 @@
+2025/05/20 14:00:00 1 a [INFO Client 1] Connecting to instance server at 1.1.1.1:6112
+2025/05/20 14:00:01 1 a [DEBUG Client 1] Generating level 83 area "MapWorldsStrand" with seed 111
+2025/05/20 14:00:02 1 a [INFO Client 1] : You have entered Strand.
+2025/05/20 14:00:30 1 a [INFO Client 1] Niko, Master of the Depths: Food for the machine, heheh!
+2025/05/20 14:01:00 1 a [INFO Client 1] : Hero has been slain.
+2025/05/20 14:02:00 1 a [INFO Client 1] Connecting to instance server at 9.9.9.9:6112
+2025/05/20 14:02:01 1 a [DEBUG Client 1] Generating level 1 area "HideoutLuxurious" with seed 222
+2025/05/20 14:02:02 1 a [INFO Client 1] : You have entered Luxurious Hideout.
+2025/05/20 14:03:00 1 a [INFO Client 1] Connecting to instance server at 1.1.1.1:6112
+2025/05/20 14:03:01 1 a [INFO Client 1] : You have entered Strand.
+2025/05/20 14:05:00 1 a [INFO Client 1] Connecting to instance server at 2.2.2.2:6112
+2025/05/20 14:05:01 1 a [DEBUG Client 1] Generating level 81 area "MapWorldsAtoll" with seed 333
+2025/05/20 14:05:02 1 a [INFO Client 1] : You have entered Atoll.

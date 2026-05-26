@@ -38,12 +38,15 @@
         "title": "PoeScout Timer",
         "width": 280,
         "height": 36,
+        "x": 16,
+        "y": 16,
         "resizable": false,
         "decorations": false,
         "transparent": true,
         "visible": false,
         "alwaysOnTop": true,
-        "skipTaskbar": true
+        "skipTaskbar": true,
+        "focus": false
       }
     ],
     "security": {

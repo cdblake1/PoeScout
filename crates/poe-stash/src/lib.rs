@@ -1,7 +1,9 @@
 pub mod client;
+pub mod inventory;
 pub mod matcher;
 
 use client::StashClient;
+use inventory::{diff_inventory, InventoryItem, LootDelta, PricedLoot};
 use matcher::price_item;
 use poe_core::types::*;
 use poe_pricing::PricingEngine;
@@ -12,6 +14,8 @@ pub struct StashTracker {
     pricing: Arc<PricingEngine>,
     snapshots: Vec<SnapshotRecord>,
     cached_tabs: Option<Vec<StashTab>>,
+    /// Character inventory captured at map start, for per-map loot diffing (6.3).
+    char_baseline: Option<Vec<InventoryItem>>,
 }
 
 struct SnapshotRecord {
@@ -26,6 +30,7 @@ impl StashTracker {
             pricing,
             snapshots: Vec::new(),
             cached_tabs: None,
+            char_baseline: None,
         }
     }
 
@@ -144,6 +149,59 @@ impl StashTracker {
         }
 
         Ok(self.finalize_snapshot(tab_summaries, all_priced, false).await)
+    }
+
+    // --- Per-map loot (6.3) ---
+
+    /// Snapshot the character's inventory as the baseline for a new map.
+    pub async fn snapshot_character_baseline(&mut self, character: &str) -> Result<(), String> {
+        let items = self.client.fetch_character_inventory(character).await?;
+        self.char_baseline = Some(items);
+        Ok(())
+    }
+
+    /// Diff current character inventory vs the baseline, price the gained loot,
+    /// then reset the baseline to the current snapshot. Returns (total_chaos, lines).
+    pub async fn capture_loot(
+        &mut self,
+        character: &str,
+        league: &str,
+    ) -> Result<(f64, Vec<PricedLoot>), String> {
+        self.pricing.ensure_fresh(league).await?;
+        let curr = self.client.fetch_character_inventory(character).await?;
+        let baseline = self.char_baseline.take().unwrap_or_default();
+        let deltas: Vec<LootDelta> = diff_inventory(&baseline, &curr);
+        let priced = self.price_loot(&deltas).await;
+        let total: f64 = priced.iter().filter_map(|p| p.total_chaos).sum();
+        self.char_baseline = Some(curr);
+        Ok((total, priced))
+    }
+
+    async fn price_loot(&self, deltas: &[LootDelta]) -> Vec<PricedLoot> {
+        let mut out = Vec::new();
+        for d in deltas {
+            let item = StashItem {
+                name: d.name.clone(),
+                type_line: d.type_line.clone(),
+                base_type: None,
+                stack_size: Some(d.stack_size),
+                max_stack_size: None,
+                icon: String::new(),
+                ilvl: None,
+                identified: None,
+                frame_type: d.frame_type,
+            };
+            let priced = price_item(&item, &self.pricing).await;
+            out.push(PricedLoot {
+                name: d.name.clone(),
+                type_line: d.type_line.clone(),
+                stack_size: d.stack_size,
+                unit_chaos: priced.unit_price,
+                total_chaos: priced.total_price,
+                frame_type: d.frame_type,
+            });
+        }
+        out
     }
 
     fn chaos_per_hour(&self) -> Option<f64> {
