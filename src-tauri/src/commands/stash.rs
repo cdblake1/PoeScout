@@ -209,6 +209,7 @@ pub async fn take_selective_snapshot(
 ) -> Result<PortfolioSummary, String> {
     let mut tracker = stash_state.lock().await;
 
+    tracker.set_min_stack_chaos(crate::commands::maps::settings_min_stack_chaos(&app));
     tracker.ensure_pricing_fresh(&league).await?;
 
     let tabs = match tracker.get_cached_tabs() {

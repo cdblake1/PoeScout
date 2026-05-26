@@ -16,6 +16,10 @@ pub struct StashTracker {
     cached_tabs: Option<Vec<StashTab>>,
     /// Character inventory captured at map start, for per-map loot diffing (6.3).
     char_baseline: Option<Vec<InventoryItem>>,
+    /// Drop stacks below this chaos value from the snapshot total. The items
+    /// list still shows everything; only the sum/snapshot total excludes noise.
+    /// 0 (default) = no filter. (6.5b)
+    min_stack_chaos: f64,
 }
 
 struct SnapshotRecord {
@@ -31,7 +35,13 @@ impl StashTracker {
             snapshots: Vec::new(),
             cached_tabs: None,
             char_baseline: None,
+            min_stack_chaos: 0.0,
         }
+    }
+
+    /// Set the per-stack chaos threshold for snapshot-total filtering (6.5b).
+    pub fn set_min_stack_chaos(&mut self, v: f64) {
+        self.min_stack_chaos = v.max(0.0);
     }
 
     pub fn set_session(&mut self, poesessid: String, account_name: String) {
@@ -76,8 +86,13 @@ impl StashTracker {
 
         for item in &items {
             let priced = price_item(item, &self.pricing).await;
+            // Noise filter (6.5b): only stacks ≥ min_stack_chaos contribute to
+            // the snapshot total. Items below threshold still appear in the items
+            // list — we just hide them from the chart/snapshot total.
             if let Some(tp) = priced.total_price {
-                tab_chaos += tp;
+                if tp >= self.min_stack_chaos {
+                    tab_chaos += tp;
+                }
             }
             tab_priced.push(priced);
         }

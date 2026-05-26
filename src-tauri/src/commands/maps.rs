@@ -163,6 +163,13 @@ fn settings_character(app: &AppHandle) -> Option<String> {
     }
 }
 
+/// Per-stack chaos threshold for stash snapshot totals (6.5b). 0 = no filter.
+pub(crate) fn settings_min_stack_chaos(app: &AppHandle) -> f64 {
+    read_settings(app)
+        .and_then(|v| v.get("min_stack_chaos").and_then(|x| x.as_f64()))
+        .unwrap_or(0.0)
+}
+
 fn settings_idle_timeout(app: &AppHandle) -> u64 {
     read_settings(app)
         .and_then(|v| v.get("session_idle_timeout_secs").and_then(|t| t.as_u64()))
@@ -190,6 +197,7 @@ async fn snapshot_total_chaos(app: &AppHandle) -> Option<f64> {
     if !tracker.is_authenticated() {
         return None;
     }
+    tracker.set_min_stack_chaos(settings_min_stack_chaos(app));
     tracker.ensure_pricing_fresh(&league).await.ok()?;
 
     let all_tabs = match tracker.get_cached_tabs() {
