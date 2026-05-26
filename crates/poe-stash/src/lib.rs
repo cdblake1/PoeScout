@@ -16,6 +16,11 @@ pub struct StashTracker {
     cached_tabs: Option<Vec<StashTab>>,
     /// Character inventory captured at map start, for per-map loot diffing (6.3).
     char_baseline: Option<Vec<InventoryItem>>,
+    /// Character inventory captured at the moment a run was *suspended* (entered
+    /// town). Used as the "end" inventory for the prior run so town purchases
+    /// or crafts between maps don't leak into its loot diff. Cleared by
+    /// `capture_loot` once consumed. (6.3 town-leak fix)
+    pending_end_inventory: Option<Vec<InventoryItem>>,
     /// Drop stacks below this chaos value from the snapshot total. The items
     /// list still shows everything; only the sum/snapshot total excludes noise.
     /// 0 (default) = no filter. (6.5b)
@@ -35,6 +40,7 @@ impl StashTracker {
             snapshots: Vec::new(),
             cached_tabs: None,
             char_baseline: None,
+            pending_end_inventory: None,
             min_stack_chaos: 0.0,
         }
     }
@@ -175,20 +181,40 @@ impl StashTracker {
         Ok(())
     }
 
-    /// Diff current character inventory vs the baseline, price the gained loot,
-    /// then reset the baseline to the current snapshot. Returns (total_chaos, lines).
+    /// Snapshot the character's inventory at the moment a map is *suspended*
+    /// (entering town/hideout). Used as the prior run's end inventory so town
+    /// activity between maps doesn't leak into its loot. (6.3 town-leak fix)
+    pub async fn snapshot_character_at_suspend(
+        &mut self,
+        character: &str,
+    ) -> Result<(), String> {
+        let items = self.client.fetch_character_inventory(character).await?;
+        self.pending_end_inventory = Some(items);
+        Ok(())
+    }
+
+    /// Diff baseline vs the run's "end" inventory, price the gained loot, and
+    /// reset baseline to the end inventory (next run's starting point).
+    ///
+    /// For the **end inventory** prefers the snapshot taken at *suspend time*
+    /// (town entry) if present — this prevents town purchases/crafts between
+    /// maps from leaking into the prior map's loot diff. Falls back to a fresh
+    /// fetch if no suspend snapshot was taken (the direct map→map case).
     pub async fn capture_loot(
         &mut self,
         character: &str,
         league: &str,
     ) -> Result<(f64, Vec<PricedLoot>), String> {
         self.pricing.ensure_fresh(league).await?;
-        let curr = self.client.fetch_character_inventory(character).await?;
+        let end_inventory = match self.pending_end_inventory.take() {
+            Some(p) => p,
+            None => self.client.fetch_character_inventory(character).await?,
+        };
         let baseline = self.char_baseline.take().unwrap_or_default();
-        let deltas: Vec<LootDelta> = diff_inventory(&baseline, &curr);
+        let deltas: Vec<LootDelta> = diff_inventory(&baseline, &end_inventory);
         let priced = self.price_loot(&deltas).await;
         let total: f64 = priced.iter().filter_map(|p| p.total_chaos).sum();
-        self.char_baseline = Some(curr);
+        self.char_baseline = Some(end_inventory);
         Ok((total, priced))
     }
 

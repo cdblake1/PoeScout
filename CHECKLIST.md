@@ -56,9 +56,13 @@ Run `npx --prefix packages/ui tauri dev` with Path of Exile open.
 - [ ] 6.3a: `character-window/get-items` returns expected JSON for your character (set Character in Settings)
 - [ ] 6.3b: per-map loot value (loot_chaos) populated on map completion
 - [ ] 6.3b: per-run loot line items stored and shown (Loot column on Recent Runs)
-- Note: loot is diffed inventory(map start) vs inventory(map completion). For
-  map→town→map, town purchases/crafts between maps can leak into the prior map's
-  loot (known limitation — refine later with per-area snapshots).
+- [ ] 6.3c (town-leak fix): in a map → town → DIFFERENT map sequence, town
+      purchases/crafts between maps do NOT leak into the prior map's loot
+
+## Phase 6.5 — Net worth + noise filter (needs GGG credentials)
+- [ ] 6.5a: stash scan records a portfolio snapshot (Net worth sparkline in Maps Trends populates)
+- [ ] 6.5a: auto-session start/end also add data points (chaos only)
+- [ ] 6.5b: "Snapshot noise filter (chaos)" in Settings > 0 excludes sub-threshold stacks from the snapshot total; items list still shows them
 
 ## Notes
 <!-- Add any bugs, observations, or values seen during testing here -->
