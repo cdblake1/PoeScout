@@ -224,6 +224,9 @@ pub async fn poll_events_loop(app: AppHandle, tracker_state: MapTrackerState) {
     let mut idle_since: Option<Instant> = None;
     // started_at of the run we last baselined, so we snapshot inventory once per run.
     let mut current_run_key: Option<String> = None;
+    // Previous tick's state, used to detect InMap→Idle transitions and freeze
+    // the run's "end" inventory at suspend time before town activity leaks in.
+    let mut prev_state: Option<TrackerState> = None;
 
     loop {
         tokio::time::sleep(Duration::from_millis(250)).await;
@@ -266,6 +269,26 @@ pub async fn poll_events_loop(app: AppHandle, tracker_state: MapTrackerState) {
                 }
             }
         }
+
+        // --- Suspend-time inventory snapshot (6.3 town-leak fix) ---
+        // Detect the InMap → Idle transition (entering town/hideout) and freeze
+        // the prior run's end inventory NOW, before any town activity leaks in.
+        // capture_loot (below, fired on the eventual MapCompleted) will prefer
+        // this pending snapshot over a fresh fetch.
+        let was_in_map = matches!(prev_state, Some(TrackerState::InMap { .. }));
+        let now_idle = matches!(state, TrackerState::Idle { .. });
+        if was_in_map && now_idle {
+            if let Some(character) = settings_character(&app) {
+                let stash = app.state::<StashTrackerState>();
+                let mut t = stash.lock().await;
+                if t.is_authenticated() {
+                    if let Err(e) = t.snapshot_character_at_suspend(&character).await {
+                        tracing::warn!("Loot suspend snapshot failed: {}", e);
+                    }
+                }
+            }
+        }
+        prev_state = Some(state.clone());
 
         // --- Per-map loot capture (6.3; needs a configured character + creds) ---
         if let Some(character) = settings_character(&app) {
