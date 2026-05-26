@@ -111,6 +111,7 @@ pub fn run() {
             commands::maps::get_map_stats,
             commands::maps::get_map_sessions,
             commands::maps::get_map_type_stats,
+            commands::maps::get_net_worth_history,
             commands::maps::get_session_detail,
             commands::maps::set_tracked_character,
             commands::maps::clear_map_history,

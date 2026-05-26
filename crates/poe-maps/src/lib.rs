@@ -11,7 +11,8 @@ use chrono::NaiveDateTime;
 use db::MapDb;
 use parser::LogEvent;
 use state::{
-    LootItem, MapRun, MapSession, MapStats, MapTypeStat, StateEvent, StateMachine, TrackerState,
+    LootItem, MapRun, MapSession, MapStats, MapTypeStat, PortfolioSnapshot, StateEvent,
+    StateMachine, TrackerState,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -130,6 +131,28 @@ impl MapTracker {
 
     pub fn get_map_type_stats(&self) -> Result<Vec<MapTypeStat>> {
         self.db.get_map_type_stats()
+    }
+
+    pub fn insert_portfolio_snapshot(
+        &self,
+        timestamp: &str,
+        total_chaos: f64,
+        total_divine: f64,
+    ) -> Result<i64> {
+        self.db
+            .insert_portfolio_snapshot(timestamp, total_chaos, total_divine)
+    }
+
+    pub fn get_portfolio_snapshots(&self, limit: u32) -> Result<Vec<PortfolioSnapshot>> {
+        self.db.get_portfolio_snapshots(limit)
+    }
+
+    /// Convenience: timestamp "now" via the crate's chrono dep so callers
+    /// (src-tauri) don't need their own chrono dependency.
+    pub fn record_portfolio_snapshot(&self, total_chaos: f64, total_divine: f64) -> Result<i64> {
+        let ts = now_local().format("%Y-%m-%dT%H:%M:%S").to_string();
+        self.db
+            .insert_portfolio_snapshot(&ts, total_chaos, total_divine)
     }
 
     // --- Sessions (6.2) ---

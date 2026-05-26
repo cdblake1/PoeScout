@@ -7,6 +7,7 @@ import {
   getMapStats,
   getMapSessions,
   getMapTypeStats,
+  getNetWorthHistory,
   clearMapHistory,
   type TrackerState,
   type MapRun,
@@ -14,6 +15,7 @@ import {
   type MapSession,
   type MapTypeStat,
   type MapEncounter,
+  type PortfolioSnapshot,
 } from "../../lib/tauri";
 
 function formatDuration(secs: number): string {
@@ -60,6 +62,7 @@ const MapTimer: Component = () => {
   const [history, setHistory] = createSignal<MapRun[]>([]);
   const [sessions, setSessions] = createSignal<MapSession[]>([]);
   const [mapTypeStats, setMapTypeStats] = createSignal<MapTypeStat[]>([]);
+  const [netWorth, setNetWorth] = createSignal<PortfolioSnapshot[]>([]);
   const [stats, setStats] = createSignal<MapStats>({
     total_runs: 0,
     avg_duration_secs: 0,
@@ -86,16 +89,18 @@ const MapTimer: Component = () => {
 
   const refreshData = async () => {
     try {
-      const [h, st, ses, mts] = await Promise.all([
+      const [h, st, ses, mts, nw] = await Promise.all([
         getMapHistory(50, 0),
         getMapStats(),
         getMapSessions(20, 0),
         getMapTypeStats(),
+        getNetWorthHistory(50),
       ]);
       setHistory(h);
       setStats(st);
       setSessions(ses);
       setMapTypeStats(mts);
+      setNetWorth(nw);
     } catch {}
   };
 
@@ -221,8 +226,14 @@ const MapTimer: Component = () => {
       </Show>
 
       {/* Trends */}
-      <Show when={history().length > 1 || sessions().some((s) => s.chaos_per_hour != null)}>
-        <div class="bg-poe-surface border border-poe-border rounded p-3 grid grid-cols-2 gap-4">
+      <Show
+        when={
+          history().length > 1 ||
+          sessions().some((s) => s.chaos_per_hour != null) ||
+          netWorth().length > 1
+        }
+      >
+        <div class="bg-poe-surface border border-poe-border rounded p-3 grid grid-cols-3 gap-4">
           <Sparkline
             data={history().slice(0, 30).reverse().map((r) => r.duration_secs)}
             label={`Run duration — last ${Math.min(history().length, 30)} (oldest → newest)`}
@@ -236,6 +247,11 @@ const MapTimer: Component = () => {
               .map((s) => s.chaos_per_hour!)}
             label="Currency/hour — by session (oldest → newest)"
             color="#7fd97f"
+          />
+          <Sparkline
+            data={netWorth().slice().reverse().map((p) => p.total_chaos)}
+            label={`Net worth (chaos) — last ${netWorth().length} snapshots`}
+            color="#e8c170"
           />
         </div>
       </Show>

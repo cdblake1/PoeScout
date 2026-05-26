@@ -250,9 +250,19 @@ pub async fn take_selective_snapshot(
         }
     }
 
-    Ok(tracker
+    let summary = tracker
         .finalize_snapshot(tab_summaries, all_priced, rate_limited)
-        .await)
+        .await;
+    drop(tracker);
+
+    // Record a net-worth time-series point (6.5).
+    let map_state = app.state::<crate::commands::maps::MapTrackerState>();
+    let guard = map_state.lock().await;
+    if let Some(t) = guard.as_ref() {
+        let _ = t.record_portfolio_snapshot(summary.total_chaos, summary.total_divine);
+    }
+
+    Ok(summary)
 }
 
 #[tauri::command]
