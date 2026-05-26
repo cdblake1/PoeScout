@@ -1,6 +1,8 @@
 use crate::commands::stash::StashTrackerState;
 use poe_maps::session::{next_session_action, SessionAction};
-use poe_maps::state::{MapRun, MapSession, MapStats, MapTypeStat, StateEvent, TrackerState};
+use poe_maps::state::{
+    MapRun, MapSession, MapStats, MapTypeStat, PortfolioSnapshot, StateEvent, TrackerState,
+};
 use poe_maps::MapTracker;
 use serde::Serialize;
 use std::sync::Arc;
@@ -70,6 +72,20 @@ pub async fn get_map_type_stats(
     let guard = tracker_state.lock().await;
     match &*guard {
         Some(tracker) => tracker.get_map_type_stats().map_err(|e| e.to_string()),
+        None => Ok(vec![]),
+    }
+}
+
+#[tauri::command]
+pub async fn get_net_worth_history(
+    limit: u32,
+    tracker_state: State<'_, MapTrackerState>,
+) -> Result<Vec<PortfolioSnapshot>, String> {
+    let guard = tracker_state.lock().await;
+    match &*guard {
+        Some(tracker) => tracker
+            .get_portfolio_snapshots(limit)
+            .map_err(|e| e.to_string()),
         None => Ok(vec![]),
     }
 }
@@ -327,6 +343,9 @@ pub async fn poll_events_loop(app: AppHandle, tracker_state: MapTrackerState) {
                 let mut guard = tracker_state.lock().await;
                 if let Some(tracker) = guard.as_mut() {
                     if tracker.active_session_id().is_none() {
+                        if let Some(c) = start_chaos {
+                            let _ = tracker.record_portfolio_snapshot(c, 0.0);
+                        }
                         match tracker.start_session(league.as_deref(), None, start_chaos) {
                             Ok(id) => {
                                 let _ = app.emit("map-tracker:session-start", id);
@@ -341,6 +360,9 @@ pub async fn poll_events_loop(app: AppHandle, tracker_state: MapTrackerState) {
                 let mut guard = tracker_state.lock().await;
                 if let Some(tracker) = guard.as_mut() {
                     if let Some(sid) = tracker.active_session_id() {
+                        if let Some(c) = end_chaos {
+                            let _ = tracker.record_portfolio_snapshot(c, 0.0);
+                        }
                         if let Err(e) = tracker.end_session(end_chaos) {
                             tracing::error!("Failed to end session: {}", e);
                         } else {

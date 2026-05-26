@@ -127,6 +127,16 @@ pub struct MapTypeStat {
     pub total_deaths: u32,
 }
 
+/// A point-in-time stash valuation (recorded whenever a stash scan finalizes —
+/// manual or via the auto-session start/end snapshot). Feeds the net-worth chart.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PortfolioSnapshot {
+    pub id: Option<i64>,
+    pub timestamp: String,
+    pub total_chaos: f64,
+    pub total_divine: f64,
+}
+
 pub enum StateEvent {
     MapCompleted(MapRun),
     StateChanged(TrackerState),

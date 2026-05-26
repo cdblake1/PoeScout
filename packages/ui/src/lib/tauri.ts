@@ -239,6 +239,13 @@ export interface MapTypeStat {
   total_deaths: number;
 }
 
+export interface PortfolioSnapshot {
+  id: number | null;
+  timestamp: string;
+  total_chaos: number;
+  total_divine: number;
+}
+
 export interface MapSession {
   id: number | null;
   label: string | null;
@@ -276,6 +283,10 @@ export async function getMapStats(): Promise<MapStats> {
 
 export async function getMapTypeStats(): Promise<MapTypeStat[]> {
   return invoke("get_map_type_stats");
+}
+
+export async function getNetWorthHistory(limit: number): Promise<PortfolioSnapshot[]> {
+  return invoke("get_net_worth_history", { limit });
 }
 
 export async function getMapSessions(

@@ -1,4 +1,6 @@
-use crate::state::{LootItem, MapEncounter, MapRun, MapSession, MapStats, MapTypeStat};
+use crate::state::{
+    LootItem, MapEncounter, MapRun, MapSession, MapStats, MapTypeStat, PortfolioSnapshot,
+};
 use anyhow::Result;
 use rusqlite::Connection;
 use std::path::Path;
@@ -92,6 +94,21 @@ impl MapDb {
                  );
                  CREATE INDEX IF NOT EXISTS idx_loot_items_run ON loot_items(run_id);
                  PRAGMA user_version = 2;",
+            )?;
+        }
+
+        // v3 — Phase 6.5: portfolio (net-worth) snapshots time series.
+        if version < 3 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     timestamp TEXT NOT NULL,
+                     total_chaos REAL NOT NULL,
+                     total_divine REAL NOT NULL DEFAULT 0
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_ts
+                     ON portfolio_snapshots(timestamp);
+                 PRAGMA user_version = 3;",
             )?;
         }
 
@@ -484,6 +501,48 @@ impl MapDb {
         }
         Ok(out)
     }
+
+    // --- Portfolio snapshots (6.5) ---
+
+    pub fn insert_portfolio_snapshot(
+        &self,
+        timestamp: &str,
+        total_chaos: f64,
+        total_divine: f64,
+    ) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO portfolio_snapshots (timestamp, total_chaos, total_divine)
+             VALUES (?1, ?2, ?3)",
+            rusqlite::params![timestamp, total_chaos, total_divine],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Most recent snapshots, newest first. Reverse on the client for a
+    /// left-to-right time series.
+    pub fn get_portfolio_snapshots(&self, limit: u32) -> Result<Vec<PortfolioSnapshot>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, timestamp, total_chaos, total_divine
+             FROM portfolio_snapshots
+             ORDER BY timestamp DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit], |row| {
+            Ok(PortfolioSnapshot {
+                id: Some(row.get(0)?),
+                timestamp: row.get(1)?,
+                total_chaos: row.get(2)?,
+                total_divine: row.get(3)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -854,5 +913,22 @@ mod tests {
         assert_eq!(strand_stat.run_count, 2);
         assert!((strand_stat.avg_duration_secs - 150.0).abs() < 0.1);
         assert_eq!(strand_stat.total_deaths, 1);
+    }
+
+    #[test]
+    fn portfolio_snapshot_roundtrip() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        db.insert_portfolio_snapshot("2025-05-20T14:00:00", 100.0, 0.5)
+            .unwrap();
+        db.insert_portfolio_snapshot("2025-05-20T15:00:00", 150.0, 0.75)
+            .unwrap();
+
+        let snaps = db.get_portfolio_snapshots(10).unwrap();
+        assert_eq!(snaps.len(), 2);
+        // DESC by timestamp → newest first.
+        assert!((snaps[0].total_chaos - 150.0).abs() < 0.001);
+        assert!((snaps[0].total_divine - 0.75).abs() < 0.001);
+        assert!((snaps[1].total_chaos - 100.0).abs() < 0.001);
     }
 }
