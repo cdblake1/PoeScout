@@ -320,6 +320,7 @@ export interface PriceRecord {
   chaos_value: number;
   divine_value: number | null;
   icon: string | null;
+  count: number | null;
 }
 
 export interface StashTab {
@@ -346,6 +347,7 @@ export interface PricedItem {
   unit_price: number | null;
   total_price: number | null;
   price_source: string | null;
+  listing_count: number | null;
 }
 
 export interface TabSummary {
@@ -414,6 +416,10 @@ export interface AppSettings {
   session_idle_timeout_secs?: number;
   /** Per-stack chaos threshold for stash snapshot totals (6.5b noise filter). */
   min_stack_chaos?: number;
+  /** poe.ninja listing-count threshold for snapshot totals (6.5c noise filter). */
+  min_listing_count?: number;
+  /** Optional override for the league prices are fetched from (6.5c). */
+  price_league?: string;
 }
 
 export async function saveSettings(settings: AppSettings): Promise<void> {

@@ -15,6 +15,10 @@ const SettingsPanel: Component = () => {
   const [savedCharacter, setSavedCharacter] = createSignal("");
   const [minStackChaos, setMinStackChaos] = createSignal("0");
   const [savedMinStackChaos, setSavedMinStackChaos] = createSignal(0);
+  const [minListingCount, setMinListingCount] = createSignal("0");
+  const [savedMinListingCount, setSavedMinListingCount] = createSignal(0);
+  const [priceLeague, setPriceLeague] = createSignal("");
+  const [savedPriceLeague, setSavedPriceLeague] = createSignal("");
   const [loading, setLoading] = createSignal(true);
   const [saving, setSaving] = createSignal(false);
   const [status, setStatus] = createSignal("");
@@ -40,6 +44,14 @@ const SettingsPanel: Component = () => {
       const msc = settings?.min_stack_chaos ?? 0;
       setMinStackChaos(String(msc));
       setSavedMinStackChaos(msc);
+
+      const mlc = settings?.min_listing_count ?? 0;
+      setMinListingCount(String(mlc));
+      setSavedMinListingCount(mlc);
+
+      const pl = settings?.price_league ?? "";
+      setPriceLeague(pl);
+      setSavedPriceLeague(pl);
     } catch (e) {
       setStatus(`Failed to load settings: ${e}`);
     } finally {
@@ -53,15 +65,21 @@ const SettingsPanel: Component = () => {
     try {
       const char = character().trim();
       const msc = Math.max(0, parseFloat(minStackChaos()) || 0);
+      const mlc = Math.max(0, parseInt(minListingCount(), 10) || 0);
+      const pl = priceLeague().trim();
       await saveSettings({
         league: selectedLeague(),
         character: char,
         min_stack_chaos: msc,
+        min_listing_count: mlc,
+        price_league: pl,
       });
       await setTrackedCharacter(char || null);
       setSavedLeague(selectedLeague());
       setSavedCharacter(char);
       setSavedMinStackChaos(msc);
+      setSavedMinListingCount(mlc);
+      setSavedPriceLeague(pl);
       setStatus("Settings saved");
     } catch (e) {
       setStatus(`Failed to save: ${e}`);
@@ -73,7 +91,9 @@ const SettingsPanel: Component = () => {
   const hasChanges = () =>
     selectedLeague() !== savedLeague() ||
     character().trim() !== savedCharacter() ||
-    (Math.max(0, parseFloat(minStackChaos()) || 0) !== savedMinStackChaos());
+    Math.max(0, parseFloat(minStackChaos()) || 0) !== savedMinStackChaos() ||
+    Math.max(0, parseInt(minListingCount(), 10) || 0) !== savedMinListingCount() ||
+    priceLeague().trim() !== savedPriceLeague();
 
   return (
     <div class="flex flex-col gap-6 max-w-lg">
@@ -125,6 +145,42 @@ const SettingsPanel: Component = () => {
             <p class="text-poe-muted text-xs">
               Stacks worth less than this (in chaos) are excluded from the snapshot total
               that drives the net-worth chart. Items table still shows everything. 0 = no filter.
+            </p>
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <label class="text-poe-muted text-sm font-bold">poe.ninja listing-count threshold</label>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              class="px-3 py-2 bg-poe-bg border border-poe-border rounded text-poe-text text-sm font-mono focus:border-poe-accent focus:outline-none"
+              value={minListingCount()}
+              onInput={(e) => setMinListingCount(e.currentTarget.value)}
+            />
+            <p class="text-poe-muted text-xs">
+              Stacks priced from poe.ninja entries with fewer than this many listings are
+              excluded from the snapshot total (low listing counts = low confidence).
+              Try <code>10</code>. 0 = no filter. Items without a count (uncommon) are not filtered.
+            </p>
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <label class="text-poe-muted text-sm font-bold">Price-league override</label>
+            <select
+              class="px-3 py-2 bg-poe-bg border border-poe-border rounded text-poe-text text-sm font-mono focus:border-poe-accent focus:outline-none"
+              value={priceLeague()}
+              onChange={(e) => setPriceLeague(e.currentTarget.value)}
+            >
+              <option value="">Same as game league</option>
+              <For each={leagues()}>
+                {(league) => <option value={league}>{league}</option>}
+              </For>
+            </select>
+            <p class="text-poe-muted text-xs">
+              Fetch prices from a different league than the one your stash is in
+              (e.g. price a dead/private league against <code>Standard</code>). Leave on
+              <em> Same as game league</em> for normal use.
             </p>
           </div>
 

@@ -210,7 +210,11 @@ pub async fn take_selective_snapshot(
     let mut tracker = stash_state.lock().await;
 
     tracker.set_min_stack_chaos(crate::commands::maps::settings_min_stack_chaos(&app));
-    tracker.ensure_pricing_fresh(&league).await?;
+    tracker.set_min_listing_count(crate::commands::maps::settings_min_listing_count(&app));
+    // Pricing league can be decoupled from the stash league (6.5c).
+    let price_league = crate::commands::maps::settings_price_league(&app)
+        .unwrap_or_else(|| league.clone());
+    tracker.ensure_pricing_fresh(&price_league).await?;
 
     let tabs = match tracker.get_cached_tabs() {
         Some(cached) => cached.clone(),
