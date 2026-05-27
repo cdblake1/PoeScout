@@ -1,8 +1,13 @@
-# Phase 6 Pass 1 — Manual Test Checklist
+# Phase 6 — Manual Test Checklist
 
 Run `npx --prefix packages/ui tauri dev` with Path of Exile open.
 **Tip:** for faster session testing, set `"session_idle_timeout_secs": 30` in
 `%APPDATA%\PoeScout\settings.json` (default is 900 = 15 min).
+
+> **Status (2026-05-26):** Phase 6.1–6.5 + 6.6a are all merged on `main` (11 PRs).
+> Backend/state-machine items (Runs/UI, Instance-resume, Hub fix, Delve chip)
+> are verified. **Most credential-gated items below are unchecked** — they're
+> the carry-forward for a focused live test session whenever you can run one.
 
 ## Runs / UI
 - [x] Map a zone — live timer shows map name + correct tier | lets place it in the top left corner as default position

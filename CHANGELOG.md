@@ -3,6 +3,31 @@
 ## Unreleased
 
 ### Added
+- **OCR capture spike + `resource_snapshots` foundation (Phase 6.6a)** — first 6.6 increment; gated on a 1-click verify:
+  - `capture_poe_test` command tries `PrintWindow + PW_RENDERFULLCONTENT` on the PoE client area and returns `{width, height, non_black_fraction}` — no file I/O, no heavy deps. Declares `PrintWindow` via `extern` because the metadata-trimmed `windows` bindings don't expose it; adds the `Win32_Graphics_Gdi` feature.
+  - Debug section in Settings → **Test PoE capture** button shows e.g. `1920×1080 — 87% non-black`.
+  - `resource_snapshots` table (DB migration v4) + `MapTracker.record_resource_snapshot` / `get_resource_snapshots`. Generic `(source, value, timestamp)` keyed by source — same shape for OCR writes (`ocr:hiveblood`, `ocr:kingsmarch_gold`) and future character-API XP/kills.
+- **Net-worth time series + noise filters + league decoupling (Phase 6.5)** — three increments:
+  - **6.5a:** `portfolio_snapshots` (DB migration v3) recorded every time a stash scan finalizes (manual scan + auto-session start/end); `get_net_worth_history` command; net-worth Sparkline in the Maps Trends panel. `record_portfolio_snapshot` carries chrono internally so `src-tauri` stays chrono-free.
+  - **6.5b:** `StashTracker.set_min_stack_chaos` filter — stacks below the chaos threshold are excluded from the snapshot total (items list still shows them). Snapshot retention cap (auto-prune oldest beyond 1000 on each insert). Settings: **Snapshot noise filter (chaos)** input.
+  - **6.5c:** poe.ninja `count` (listing count) parsed into `PriceRecord` (`serde(default)` — harmless if absent); `PricedItem.listing_count` propagated by the matcher; `set_min_listing_count` excludes low-confidence prices from the total. New `price_league` setting decouples pricing from the game league (price a dead/private league against `Standard`).
+- **Stats table + trend sparklines (Phase 6.4)** — two increments:
+  - **6.4a:** `get_map_type_stats` aggregation (GROUP BY internal area id, fallback name → run count / avg time / avg loot / total deaths); Per-Map Stats table in the Maps tab with a derived Loot-per-hr column.
+  - **6.4b:** inline-SVG `Sparkline` component (no chart-lib dependency; scales to container via `viewBox` + `preserveAspectRatio="none"`); Trends panel with three sparklines — run duration, currency/hour by session, net worth — all oldest → newest.
+- **Per-map loot capture (Phase 6.3)** — the headline 6.3 feature in three increments:
+  - **6.3a:** pure `diff_inventory(prev, curr)` returning loot deltas (new items + stack-size growth; `MainInventory` only). `fetch_character_inventory` against `character-window/get-items` (separate rate budget from stash). 5 unit tests for the diff.
+  - **6.3b:** `loot_items` table + `map_runs.loot_chaos` (DB migration v2); `MapRun.loot_chaos` + `LootItem`; `set_run_loot` / `get_run_loot`; new Loot column on Recent Runs.
+  - **6.3c — town-leak fix:** new `StashTracker.pending_end_inventory` + `snapshot_character_at_suspend`; `capture_loot` prefers the suspend snapshot (taken at InMap → Idle in the poll loop) over a fresh fetch, so town purchases/crafts between maps no longer leak into the prior map's loot.
+  - End-to-end orchestration: `MapTracker.poll_events` exposes the inserted run id; src-tauri poll loop baselines inventory at map start, captures + prices + writes loot on `MapCompleted`, emits `map-tracker:loot`.
+- **Polish, testability & process**
+  - Timer overlay: `focus: false` on the timer window stops a focus-fight that caused show/hide/show flicker after a quick alt-tab return; redundant per-tick `show()` guarded; 600 ms hide debounce; default position now top-left.
+  - **Clear** button on Recent Runs (`clear_map_history` command + `clear_history` DB).
+  - `save_settings` shallow-merges so panels don't clobber each other's keys.
+  - Testability refactors: pure `merge_settings(base, incoming)` (unit-tested) extracted from `save_settings`; pure `next_session_action(state, has_active_session, idle_elapsed, idle_timeout)` (`SessionAction` enum, six branches unit-tested) extracted from the async poll loop.
+  - Integration tests: legacy-v0 DB migration upgrade; Client.txt replay (full session — runs/types/encounters/town-resume/attribution) using a fixture log.
+  - Auto-journal hook (`.claude/settings.local.json`, gitignored, personal): `PostToolUse`/Bash matcher that fires on `git commit` and reminds the agent to store a session-journal note — so journaling happens automatically at commits.
+  - **Working Rules** section in `CLAUDE.md` (research agents → Sonnet; test eval + commit-first at every stopping point).
+  - `CHECKLIST.md` is a running per-PR test list (pending fixes + per-sub-phase verify items + carry-forward note for credential-gated flows).
 - **Advanced Map Tracking & Sessions (Phase 6, Pass 1)** — richer Client.txt parsing plus automatic farming sessions with currency/hour:
   - Internal area-id capture (`Generating level N area "Id"`) → canonical map identity, real map tier, and an `AreaType` classifier (map/town/hideout/hub/…) that fixes Kingsmarch, The Rogue Harbour, and Azurite Mine being mis-counted as map runs
   - Instance-endpoint tracking (`Connecting to instance server at`) so town-portalling back into a map *resumes* the same run instead of splitting it; idle/hideout time attributed to runs; sub-areas (Vaal/lab/abyss) no longer split a run
