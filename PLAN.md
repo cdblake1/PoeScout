@@ -93,6 +93,8 @@ that doc each league.
       drag-a-box calibration UI + session-boundary reads writing to
       `resource_snapshots`. If ≈ 0 → fall back to `Windows.Graphics.Capture`
       (D3D11 framepool, heavier).
+- [ ] **6.7** items/hour view — see sub-spec below; **Tier-1 is queued as the
+      next concrete deliverable**; Tier-2 / Tier-3 follow as new tabs / OCR land.
 - [ ] **6.5d** two-tier item retention (deferred) — store priced items per
       snapshot for the last N snapshots; "items gained" diff view; new
       `snapshot_items` table + retention prune + UI panel. Defer until there's
@@ -100,3 +102,43 @@ that doc each league.
 - [ ] **Manual verification pass** — credential-gated flows (sessions, loot,
       net-worth chart, noise filters) are still unchecked in `CHECKLIST.md`.
       One live session would catch any regressions before more code lands.
+
+### Phase 6.7 — Items/Hour view (spec)
+
+**Why:** the net-worth sparkline and per-map loot total answer *how much* but not
+*what*. Juicers picking between strategies need to know "am I getting more
+chaos/hr from currency drops or div cards?", "how much Crystallised Lifeforce/hr
+in this Harvest setup?", "Divines/hr in T17 vs T16?". The data for most of this
+is already in `loot_items` — we just don't aggregate by item name.
+
+**Data sources (three tiers, reuse what's already there):**
+| Tier | Source                        | Examples                                                      | Status                                    |
+|------|-------------------------------|---------------------------------------------------------------|-------------------------------------------|
+| 1    | `loot_items` (inventory diff) | Chaos/Divine, Harvest Lifeforce, splinters, fossils, embers, Expedition artifacts, Hinekora's Locks | Data lives now; just needs aggregation    |
+| 2    | New stash-tab fetches         | Bestiary (red beasts), Map tab, Currency tab                  | Needs new `fetch_stash_tab` path per type |
+| 3    | `resource_snapshots` (OCR)    | Hiveblood, sulphite, Kingsmarch gold, Sanctum Sacred Water    | Blocked on 6.6b OCR shipping              |
+
+#### 6.7a — Tier-1 aggregation + view (next concrete deliverable)
+- [ ] Backend: `get_items_per_hour(scope) -> Vec<ItemRate>` Tauri command in
+      `src-tauri/src/commands/maps.rs`. `scope` enum: `CurrentSession`,
+      `Session(id)`, `LastN(n)`, `DateRange { from, to }`, `AllTime`.
+- [ ] `poe-maps` query: `SELECT name, SUM(stack_size) AS stacks, SUM(stack_size * chaos_per_unit) AS chaos, COUNT(*) AS drops FROM loot_items WHERE map_run_id IN (...) GROUP BY name`. Active hours = sum of `map_sessions.active_secs` (or active time of the scoped runs for non-session scopes — idle excluded either way).
+- [ ] `ItemRate { name, source: "inventory", stacks, chaos, drops, items_per_hour, chaos_per_hour }`.
+- [ ] UI: new **Items/hr** panel in the Maps tab (below Trends, above Per-Map Stats), sortable table — default sort by `chaos_per_hour` desc; columns: Name · Stacks · Items/hr · Chaos/hr · Drops. Scope toggle pill row: `This session | Last 5 sessions | All time`.
+- [ ] Pinned items: small `pinned_items: Vec<String>` setting in `settings.json`; pinned rows always shown (even if zero drops in scope) and float to top.
+- [ ] Unit tests: SQL aggregation against a seeded DB (3 runs, mixed loot, one zero-drop pinned item); pure rate calc (`items_per_hour` from stacks + active_secs, divide-by-zero guard).
+- [ ] CHECKLIST entry: live verify against a real session.
+
+#### 6.7b — Tier-2 special stash tabs (after 6.7a)
+- [ ] Extend `StashClient::fetch_stash_tab` to handle Bestiary tab (and Map / Currency tabs if cheap). Reuse `diff_inventory` shape.
+- [ ] New `loot_items.source` values: `"stash:bestiary"`, `"stash:map"`, etc. (column already in schema if we add it; otherwise migration v5).
+- [ ] Beast rarity captured per row → enables "Red beasts/hr" filter.
+- [ ] Filter chips in the Items/hr panel: `Currency | Fragments | Scarabs | Lifeforce | Beasts | All`.
+
+#### 6.7c — Tier-3 OCR resources (after 6.6b)
+- [ ] `get_items_per_hour` reads `resource_snapshots` deltas keyed `ocr:*` and folds them into the same `ItemRate` list with `source: "ocr:<key>"`.
+- [ ] Calibration UI from 6.6b doubles as the "add a tracked OCR resource" UX — once calibrated, it shows up in the items/hr table automatically.
+
+#### Open questions (decide during 6.7a)
+- Rate denominator default: **active map time** (idle excluded, matches existing c/hr) vs session wall time vs world clock. Lean active map time for consistency; expose a toggle if users push back.
+- Per-tier or unified view: ship 6.7a as one table sourced from `loot_items` only; add a `Source` column when 6.7b/c expand it. Don't gate 6.7a on the others.
