@@ -132,6 +132,11 @@ pub struct PriceRecord {
     pub chaos_value: f64,
     pub divine_value: Option<f64>,
     pub icon: Option<String>,
+    /// poe.ninja listing count (number of recent listings backing this price).
+    /// Used as a confidence signal — low counts are noisy. `None` when the
+    /// upstream API didn't surface a count for this record. (6.5c)
+    #[serde(default)]
+    pub count: Option<u32>,
 }
 
 // --- Stash types (GGG API) ---
@@ -170,6 +175,10 @@ pub struct PricedItem {
     pub unit_price: Option<f64>,
     pub total_price: Option<f64>,
     pub price_source: Option<String>,
+    /// Listing-count confidence carried through from the matched PriceRecord
+    /// for the noise filter (6.5c). `None` when the upstream didn't supply it.
+    #[serde(default)]
+    pub listing_count: Option<u32>,
 }
 
 // --- Portfolio types ---

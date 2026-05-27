@@ -63,6 +63,8 @@ Run `npx --prefix packages/ui tauri dev` with Path of Exile open.
 - [ ] 6.5a: stash scan records a portfolio snapshot (Net worth sparkline in Maps Trends populates)
 - [ ] 6.5a: auto-session start/end also add data points (chaos only)
 - [ ] 6.5b: "Snapshot noise filter (chaos)" in Settings > 0 excludes sub-threshold stacks from the snapshot total; items list still shows them
+- [ ] 6.5c: "poe.ninja listing-count threshold" in Settings filters low-confidence prices from the snapshot total
+- [ ] 6.5c: "Price-league override" in Settings fetches prices from a different league (e.g. `Standard`); stash fetches still use the game league
 
 ## Notes
 <!-- Add any bugs, observations, or values seen during testing here -->

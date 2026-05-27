@@ -27,6 +27,7 @@ pub async fn price_item(item: &StashItem, pricing: &PricingEngine) -> PricedItem
         item: item.clone(),
         unit_price: price.as_ref().map(|p| p.chaos_value),
         total_price: price.as_ref().map(|p| p.chaos_value * stack),
+        listing_count: price.as_ref().and_then(|p| p.count),
         price_source: price.map(|p| p.category),
     }
 }
@@ -60,6 +61,7 @@ pub fn price_item_sync(
         item: item.clone(),
         unit_price,
         total_price: unit_price.map(|p| p * stack),
+        listing_count: None,
         price_source: None,
     }
 }

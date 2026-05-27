@@ -47,6 +47,9 @@ struct CoreItem {
     name: String,
     category: Option<String>,
     image: Option<String>,
+    /// poe.ninja listing count if surfaced; harmless if absent. (6.5c)
+    #[serde(default)]
+    count: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -54,6 +57,9 @@ struct ExchangeLine {
     id: String,
     #[serde(rename = "primaryValue")]
     primary_value: f64,
+    /// poe.ninja listing count if surfaced; harmless if absent. (6.5c)
+    #[serde(default)]
+    count: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -121,6 +127,7 @@ impl NinjaClient {
                     chaos_value: line.primary_value,
                     divine_value: divine_rate.map(|r| line.primary_value * r),
                     icon: item.image.clone(),
+                    count: line.count,
                 })
             })
             .collect();
@@ -142,6 +149,7 @@ impl NinjaClient {
                     chaos_value,
                     divine_value: divine_rate.map(|r| chaos_value * r),
                     icon: ci.image.clone(),
+                    count: ci.count,
                 });
             }
         }

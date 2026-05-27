@@ -170,6 +170,24 @@ pub(crate) fn settings_min_stack_chaos(app: &AppHandle) -> f64 {
         .unwrap_or(0.0)
 }
 
+/// poe.ninja listing-count threshold for snapshot totals (6.5c). 0 = no filter.
+pub(crate) fn settings_min_listing_count(app: &AppHandle) -> u32 {
+    read_settings(app)
+        .and_then(|v| v.get("min_listing_count").and_then(|x| x.as_u64()))
+        .map(|n| n as u32)
+        .unwrap_or(0)
+}
+
+/// Optional price-league override; falls back to the game league. Lets the user
+/// price a dead/private league against Standard, for example. (6.5c)
+pub(crate) fn settings_price_league(app: &AppHandle) -> Option<String> {
+    read_settings(app)?
+        .get("price_league")?
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
 fn settings_idle_timeout(app: &AppHandle) -> u64 {
     read_settings(app)
         .and_then(|v| v.get("session_idle_timeout_secs").and_then(|t| t.as_u64()))
@@ -198,7 +216,10 @@ async fn snapshot_total_chaos(app: &AppHandle) -> Option<f64> {
         return None;
     }
     tracker.set_min_stack_chaos(settings_min_stack_chaos(app));
-    tracker.ensure_pricing_fresh(&league).await.ok()?;
+    tracker.set_min_listing_count(settings_min_listing_count(app));
+    // Pricing can use a different league than the game (6.5c).
+    let price_league = settings_price_league(app).unwrap_or_else(|| league.clone());
+    tracker.ensure_pricing_fresh(&price_league).await.ok()?;
 
     let all_tabs = match tracker.get_cached_tabs() {
         Some(cached) => cached.clone(),
