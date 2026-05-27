@@ -1,5 +1,6 @@
 use crate::state::{
     LootItem, MapEncounter, MapRun, MapSession, MapStats, MapTypeStat, PortfolioSnapshot,
+    ResourceSnapshot,
 };
 use anyhow::Result;
 use rusqlite::Connection;
@@ -112,6 +113,21 @@ impl MapDb {
                  CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_ts
                      ON portfolio_snapshots(timestamp);
                  PRAGMA user_version = 3;",
+            )?;
+        }
+
+        // v4 — Phase 6.6: generic resource time-series (OCR reads, XP, etc.).
+        if version < 4 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS resource_snapshots (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     source TEXT NOT NULL,
+                     value INTEGER NOT NULL,
+                     timestamp TEXT NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_resource_snapshots_src_ts
+                     ON resource_snapshots(source, timestamp);
+                 PRAGMA user_version = 4;",
             )?;
         }
 
@@ -557,6 +573,47 @@ impl MapDb {
         }
         Ok(out)
     }
+
+    // --- Resource snapshots (6.6) ---
+
+    pub fn insert_resource_snapshot(
+        &self,
+        source: &str,
+        value: i64,
+        timestamp: &str,
+    ) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO resource_snapshots (source, value, timestamp) VALUES (?1, ?2, ?3)",
+            rusqlite::params![source, value, timestamp],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn get_resource_snapshots(
+        &self,
+        source: &str,
+        limit: u32,
+    ) -> Result<Vec<ResourceSnapshot>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, source, value, timestamp FROM resource_snapshots
+             WHERE source = ?1 ORDER BY timestamp DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![source, limit], |row| {
+            Ok(ResourceSnapshot {
+                id: Some(row.get(0)?),
+                source: row.get(1)?,
+                value: row.get(2)?,
+                timestamp: row.get(3)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -969,5 +1026,29 @@ mod tests {
         // Newest row preserved (i = N+4).
         let expected = (PORTFOLIO_SNAPSHOT_RETENTION + 4) as f64;
         assert!((snaps[0].total_chaos - expected).abs() < 0.001);
+    }
+
+    #[test]
+    fn resource_snapshot_roundtrip_per_source() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+
+        db.insert_resource_snapshot("ocr:hiveblood", 1_000, "2025-05-26T14:00:00")
+            .unwrap();
+        db.insert_resource_snapshot("ocr:hiveblood", 1_500, "2025-05-26T15:00:00")
+            .unwrap();
+        db.insert_resource_snapshot("ocr:kingsmarch_gold", 50_000, "2025-05-26T15:00:00")
+            .unwrap();
+
+        let hb = db.get_resource_snapshots("ocr:hiveblood", 10).unwrap();
+        assert_eq!(hb.len(), 2);
+        assert_eq!(hb[0].value, 1_500); // DESC by timestamp → newest first
+
+        let gold = db.get_resource_snapshots("ocr:kingsmarch_gold", 10).unwrap();
+        assert_eq!(gold.len(), 1);
+        assert_eq!(gold[0].value, 50_000);
+
+        // Sources isolated.
+        assert!(db.get_resource_snapshots("ocr:nonexistent", 10).unwrap().is_empty());
     }
 }

@@ -66,6 +66,11 @@ Run `npx --prefix packages/ui tauri dev` with Path of Exile open.
 - [ ] 6.5c: "poe.ninja listing-count threshold" in Settings filters low-confidence prices from the snapshot total
 - [ ] 6.5c: "Price-league override" in Settings fetches prices from a different league (e.g. `Standard`); stash fetches still use the game league
 
+## Phase 6.6 — OCR capture spike
+- [ ] Open PoE on screen; in Settings → click **Test PoE capture** → reports e.g. `1920×1080 — 87% non-black`
+- [ ] Non-black fraction ≥ 0.5 → `PrintWindow + PW_RENDERFULLCONTENT` works; safe to build OCR + calibration on top
+- [ ] If close to 0% (black frame) → report back; we'd switch to the heavier `Windows.Graphics.Capture` path
+
 ## Notes
 <!-- Add any bugs, observations, or values seen during testing here -->
 map overlay got into a state where it would flicker, show,hide,show,hide continuously after alt+tab and return quickly
