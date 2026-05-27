@@ -137,6 +137,17 @@ pub struct PortfolioSnapshot {
     pub total_divine: f64,
 }
 
+/// Generic numeric resource time-series row (6.6). Source examples:
+/// `ocr:hiveblood`, `ocr:kingsmarch_gold`, `experience`. Lets us record any
+/// integer-valued game resource by key without a per-resource schema.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ResourceSnapshot {
+    pub id: Option<i64>,
+    pub source: String,
+    pub value: i64,
+    pub timestamp: String,
+}
+
 pub enum StateEvent {
     MapCompleted(MapRun),
     StateChanged(TrackerState),

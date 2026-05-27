@@ -5,6 +5,8 @@ import {
   loadSettings,
   saveSettings,
   setTrackedCharacter,
+  capturePoeTest,
+  type CaptureTestResult,
 } from "../../lib/tauri";
 
 const SettingsPanel: Component = () => {
@@ -19,6 +21,22 @@ const SettingsPanel: Component = () => {
   const [savedMinListingCount, setSavedMinListingCount] = createSignal(0);
   const [priceLeague, setPriceLeague] = createSignal("");
   const [savedPriceLeague, setSavedPriceLeague] = createSignal("");
+  const [captureRunning, setCaptureRunning] = createSignal(false);
+  const [captureResult, setCaptureResult] = createSignal<CaptureTestResult | null>(null);
+  const [captureError, setCaptureError] = createSignal("");
+
+  const runCaptureTest = async () => {
+    setCaptureRunning(true);
+    setCaptureError("");
+    setCaptureResult(null);
+    try {
+      setCaptureResult(await capturePoeTest());
+    } catch (e) {
+      setCaptureError(String(e));
+    } finally {
+      setCaptureRunning(false);
+    }
+  };
   const [loading, setLoading] = createSignal(true);
   const [saving, setSaving] = createSignal(false);
   const [status, setStatus] = createSignal("");
@@ -196,6 +214,41 @@ const SettingsPanel: Component = () => {
               <span class={status().startsWith("Failed") ? "text-red-400 text-sm" : "text-green-400 text-sm"}>
                 {status()}
               </span>
+            </Show>
+          </div>
+        </div>
+
+        <div class="bg-poe-surface border border-poe-border rounded p-4 flex flex-col gap-2">
+          <label class="text-poe-muted text-sm font-bold">Debug — OCR capture spike (6.6)</label>
+          <p class="text-poe-muted text-xs">
+            Tries to grab the PoE window with <code>PrintWindow + PW_RENDERFULLCONTENT</code> and
+            reports the fraction of non-black pixels. Open PoE on screen first.
+            Near <strong>1</strong> = capture works (we can build OCR on top).
+            Near <strong>0</strong> = black frame; we'd need <code>Windows.Graphics.Capture</code>.
+          </p>
+          <div class="flex items-center gap-3 flex-wrap">
+            <button
+              class="px-4 py-2 bg-poe-bg border border-poe-border rounded text-poe-text text-sm hover:border-poe-accent disabled:opacity-50"
+              onClick={runCaptureTest}
+              disabled={captureRunning()}
+            >
+              {captureRunning() ? "Capturing..." : "Test PoE capture"}
+            </button>
+            <Show when={captureResult()}>
+              <span
+                class={
+                  captureResult()!.non_black_fraction >= 0.5
+                    ? "text-green-400 text-sm"
+                    : "text-red-400 text-sm"
+                }
+              >
+                {captureResult()!.width}×{captureResult()!.height}
+                {" — "}
+                {(captureResult()!.non_black_fraction * 100).toFixed(1)}% non-black
+              </span>
+            </Show>
+            <Show when={captureError()}>
+              <span class="text-red-400 text-sm">{captureError()}</span>
             </Show>
           </div>
         </div>

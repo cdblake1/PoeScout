@@ -106,6 +106,7 @@ pub fn run() {
             commands::capture::get_poe_window_rect,
             commands::capture::focus_poe_window,
             commands::capture::is_poe_foreground,
+            commands::capture::capture_poe_test,
             commands::maps::get_tracker_state,
             commands::maps::get_map_history,
             commands::maps::get_map_stats,

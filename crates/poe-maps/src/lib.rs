@@ -11,8 +11,8 @@ use chrono::NaiveDateTime;
 use db::MapDb;
 use parser::LogEvent;
 use state::{
-    LootItem, MapRun, MapSession, MapStats, MapTypeStat, PortfolioSnapshot, StateEvent,
-    StateMachine, TrackerState,
+    LootItem, MapRun, MapSession, MapStats, MapTypeStat, PortfolioSnapshot, ResourceSnapshot,
+    StateEvent, StateMachine, TrackerState,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -153,6 +153,20 @@ impl MapTracker {
         let ts = now_local().format("%Y-%m-%dT%H:%M:%S").to_string();
         self.db
             .insert_portfolio_snapshot(&ts, total_chaos, total_divine)
+    }
+
+    /// 6.6: record a resource reading (OCR, character API, etc.) keyed by source.
+    pub fn record_resource_snapshot(&self, source: &str, value: i64) -> Result<i64> {
+        let ts = now_local().format("%Y-%m-%dT%H:%M:%S").to_string();
+        self.db.insert_resource_snapshot(source, value, &ts)
+    }
+
+    pub fn get_resource_snapshots(
+        &self,
+        source: &str,
+        limit: u32,
+    ) -> Result<Vec<ResourceSnapshot>> {
+        self.db.get_resource_snapshots(source, limit)
     }
 
     // --- Sessions (6.2) ---

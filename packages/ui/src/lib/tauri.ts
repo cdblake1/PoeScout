@@ -312,6 +312,18 @@ export async function isPoeForegound(): Promise<boolean> {
   return invoke("is_poe_foreground");
 }
 
+export interface CaptureTestResult {
+  width: number;
+  height: number;
+  /** 0.0 = all-black frame (DX-refused capture); 1.0 = fully painted. */
+  non_black_fraction: number;
+}
+
+/** Phase 6.6 spike: tries `PrintWindow` w/ `PW_RENDERFULLCONTENT` against PoE. */
+export async function capturePoeTest(): Promise<CaptureTestResult> {
+  return invoke("capture_poe_test");
+}
+
 // Stash & pricing types + commands
 
 export interface PriceRecord {
