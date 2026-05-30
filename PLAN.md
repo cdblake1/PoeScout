@@ -118,16 +118,16 @@ is already in `loot_items` — we just don't aggregate by item name.
 | 2    | New stash-tab fetches         | Bestiary (red beasts), Map tab, Currency tab                  | Needs new `fetch_stash_tab` path per type |
 | 3    | `resource_snapshots` (OCR)    | Hiveblood, sulphite, Kingsmarch gold, Sanctum Sacred Water    | Blocked on 6.6b OCR shipping              |
 
-#### 6.7a — Tier-1 aggregation + view (next concrete deliverable)
-- [ ] Backend: `get_items_per_hour(scope) -> Vec<ItemRate>` Tauri command in
-      `src-tauri/src/commands/maps.rs`. `scope` enum: `CurrentSession`,
-      `Session(id)`, `LastN(n)`, `DateRange { from, to }`, `AllTime`.
-- [ ] `poe-maps` query: `SELECT name, SUM(stack_size) AS stacks, SUM(stack_size * chaos_per_unit) AS chaos, COUNT(*) AS drops FROM loot_items WHERE map_run_id IN (...) GROUP BY name`. Active hours = sum of `map_sessions.active_secs` (or active time of the scoped runs for non-session scopes — idle excluded either way).
-- [ ] `ItemRate { name, source: "inventory", stacks, chaos, drops, items_per_hour, chaos_per_hour }`.
-- [ ] UI: new **Items/hr** panel in the Maps tab (below Trends, above Per-Map Stats), sortable table — default sort by `chaos_per_hour` desc; columns: Name · Stacks · Items/hr · Chaos/hr · Drops. Scope toggle pill row: `This session | Last 5 sessions | All time`.
-- [ ] Pinned items: small `pinned_items: Vec<String>` setting in `settings.json`; pinned rows always shown (even if zero drops in scope) and float to top.
-- [ ] Unit tests: SQL aggregation against a seeded DB (3 runs, mixed loot, one zero-drop pinned item); pure rate calc (`items_per_hour` from stacks + active_secs, divide-by-zero guard).
-- [ ] CHECKLIST entry: live verify against a real session.
+#### 6.7a — Tier-1 aggregation + view ✅ SHIPPED
+- [x] Backend: `get_items_per_hour(scope) -> Vec<ItemRate>` Tauri command in
+      `src-tauri/src/commands/maps.rs`. `scope` is a tagged enum: `CurrentSession`,
+      `Session { id }`, `LastSessions { n }`, `AllTime` (DateRange deferred — wasn't needed for the v1).
+- [x] `poe-maps` query: `GROUP BY name` over `loot_items` filtered by scope-resolved run IDs; `active_secs = COALESCE(SUM(duration_secs), 0)` over the same set; divide-by-zero guarded.
+- [x] `ItemRate { name, source: "inventory", stacks, drops, total_chaos, active_secs, items_per_hour, chaos_per_hour }`.
+- [x] UI: **Items/hr** panel between Per-Map Stats and Recent Runs; columns Item · Stacks · Items/hr · Chaos/hr · Drops; scope toggle pills (`This session | Last 5 | All time`); empty state spells out the credential/character/loot requirements.
+- [x] 5 DB unit tests (AllTime ordering, Session isolation, CurrentSession fallback, LastSessions window, zero-active-secs guard).
+- [x] CHECKLIST entry under "Phase 6.7" for live verification.
+- [ ] (Polish, deferred) Pinned items setting; client-side header-click sort; DateRange scope.
 
 #### 6.7b — Tier-2 special stash tabs (after 6.7a)
 - [ ] Extend `StashClient::fetch_stash_tab` to handle Bestiary tab (and Map / Currency tabs if cheap). Reuse `diff_inventory` shape.

@@ -1,6 +1,6 @@
 use crate::state::{
-    LootItem, MapEncounter, MapRun, MapSession, MapStats, MapTypeStat, PortfolioSnapshot,
-    ResourceSnapshot,
+    ItemRate, ItemRateScope, LootItem, MapEncounter, MapRun, MapSession, MapStats, MapTypeStat,
+    PortfolioSnapshot, ResourceSnapshot,
 };
 use anyhow::Result;
 use rusqlite::Connection;
@@ -590,6 +590,108 @@ impl MapDb {
         Ok(conn.last_insert_rowid())
     }
 
+    // --- Items per hour (6.7a) ---
+
+    /// Aggregate `loot_items` by name across a scope of runs, divided by the
+    /// sum of those runs' `duration_secs` (active map time, idle excluded).
+    /// Rows are returned newest-rate first (`chaos_per_hour DESC`).
+    ///
+    /// `CurrentSession` falls back to `AllTime` when no session is active —
+    /// the caller's UI shouldn't have to special-case that.
+    pub fn get_items_per_hour(&self, scope: &ItemRateScope) -> Result<Vec<ItemRate>> {
+        let conn = self.conn.lock().unwrap();
+        // Resolve scope → SQL filter + bind params; CurrentSession runs an extra
+        // lookup against map_sessions and degrades to AllTime if nothing's open.
+        let (where_clause, params): (String, Vec<i64>) = match scope {
+            ItemRateScope::AllTime => ("1 = 1".into(), vec![]),
+            ItemRateScope::Session { id } => ("session_id = ?1".into(), vec![*id]),
+            ItemRateScope::CurrentSession => {
+                let active_id: Option<i64> = conn
+                    .query_row(
+                        "SELECT id FROM map_sessions
+                         WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .ok();
+                match active_id {
+                    Some(id) => ("session_id = ?1".into(), vec![id]),
+                    None => ("1 = 1".into(), vec![]),
+                }
+            }
+            ItemRateScope::LastSessions { n } => (
+                "session_id IN (
+                    SELECT id FROM map_sessions
+                    ORDER BY started_at DESC LIMIT ?1
+                )"
+                .into(),
+                vec![*n as i64],
+            ),
+        };
+
+        let active_sql = format!(
+            "SELECT COALESCE(SUM(duration_secs), 0) FROM map_runs WHERE {where_clause}"
+        );
+        let active_secs: f64 = match params.len() {
+            0 => conn.query_row(&active_sql, [], |r| r.get(0))?,
+            1 => conn.query_row(&active_sql, [params[0]], |r| r.get(0))?,
+            _ => unreachable!("scope binds at most one parameter"),
+        };
+
+        let items_sql = format!(
+            "SELECT name,
+                    COALESCE(SUM(stack_size), 0) AS stacks,
+                    COUNT(*) AS drops,
+                    COALESCE(SUM(total_chaos), 0) AS total_chaos
+             FROM loot_items
+             WHERE run_id IN (SELECT id FROM map_runs WHERE {where_clause})
+             GROUP BY name"
+        );
+
+        let mut stmt = conn.prepare(&items_sql)?;
+        let hours = if active_secs > 0.0 {
+            active_secs / 3600.0
+        } else {
+            0.0
+        };
+        let map_row = |row: &rusqlite::Row| -> rusqlite::Result<ItemRate> {
+            let name: String = row.get(0)?;
+            let stacks: i64 = row.get(1)?;
+            let drops: i64 = row.get(2)?;
+            let total_chaos: f64 = row.get(3)?;
+            let (items_per_hour, chaos_per_hour) = if hours > 0.0 {
+                (stacks as f64 / hours, total_chaos / hours)
+            } else {
+                (0.0, 0.0)
+            };
+            Ok(ItemRate {
+                name,
+                source: "inventory".into(),
+                stacks: stacks.max(0) as u32,
+                drops: drops.max(0) as u32,
+                total_chaos,
+                active_secs,
+                items_per_hour,
+                chaos_per_hour,
+            })
+        };
+        let rows = match params.len() {
+            0 => stmt.query_map([], map_row)?.collect::<Result<Vec<_>, _>>()?,
+            1 => stmt
+                .query_map([params[0]], map_row)?
+                .collect::<Result<Vec<_>, _>>()?,
+            _ => unreachable!(),
+        };
+        // Sort in Rust (SQL ORDER BY would require duplicating the expression).
+        let mut rows = rows;
+        rows.sort_by(|a, b| {
+            b.chaos_per_hour
+                .partial_cmp(&a.chaos_per_hour)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        Ok(rows)
+    }
+
     pub fn get_resource_snapshots(
         &self,
         source: &str,
@@ -1050,5 +1152,260 @@ mod tests {
 
         // Sources isolated.
         assert!(db.get_resource_snapshots("ocr:nonexistent", 10).unwrap().is_empty());
+    }
+
+    // --- Items per hour (6.7a) ---
+
+    #[test]
+    fn items_per_hour_all_time_aggregates_and_orders() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        // Two runs, 1800s each → 3600s = 1h active.
+        let r1 = db
+            .insert_map_run(&MapRun {
+                duration_secs: 1800.0,
+                ..test_run()
+            })
+            .unwrap();
+        let r2 = db
+            .insert_map_run(&MapRun {
+                duration_secs: 1800.0,
+                ..test_run()
+            })
+            .unwrap();
+        // r1: 1 Divine (200c). r2: 10 Chaos (10c) + 1 Divine (200c).
+        db.set_run_loot(
+            r1,
+            200.0,
+            &[LootItem {
+                name: "Divine Orb".into(),
+                type_line: "Divine Orb".into(),
+                stack_size: 1,
+                unit_chaos: Some(200.0),
+                total_chaos: Some(200.0),
+                frame_type: Some(5),
+            }],
+        )
+        .unwrap();
+        db.set_run_loot(
+            r2,
+            210.0,
+            &[
+                LootItem {
+                    name: "Chaos Orb".into(),
+                    type_line: "Chaos Orb".into(),
+                    stack_size: 10,
+                    unit_chaos: Some(1.0),
+                    total_chaos: Some(10.0),
+                    frame_type: Some(5),
+                },
+                LootItem {
+                    name: "Divine Orb".into(),
+                    type_line: "Divine Orb".into(),
+                    stack_size: 1,
+                    unit_chaos: Some(200.0),
+                    total_chaos: Some(200.0),
+                    frame_type: Some(5),
+                },
+            ],
+        )
+        .unwrap();
+
+        let rates = db.get_items_per_hour(&ItemRateScope::AllTime).unwrap();
+        assert_eq!(rates.len(), 2);
+        // chaos_per_hour DESC → Divine (400/h) before Chaos (10/h).
+        assert_eq!(rates[0].name, "Divine Orb");
+        assert_eq!(rates[0].stacks, 2);
+        assert_eq!(rates[0].drops, 2);
+        assert!((rates[0].total_chaos - 400.0).abs() < 0.001);
+        assert!((rates[0].chaos_per_hour - 400.0).abs() < 0.1); // 400c / 1h
+        assert!((rates[0].items_per_hour - 2.0).abs() < 0.01); // 2 stacks / 1h
+
+        assert_eq!(rates[1].name, "Chaos Orb");
+        assert_eq!(rates[1].stacks, 10);
+        assert!((rates[1].items_per_hour - 10.0).abs() < 0.01);
+        assert!((rates[1].active_secs - 3600.0).abs() < 0.001);
+        assert_eq!(rates[1].source, "inventory");
+    }
+
+    #[test]
+    fn items_per_hour_session_scope_isolates_runs() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        let s1 = db
+            .start_session("2025-05-20T14:00:00", None, None, Some(0.0))
+            .unwrap();
+        let s2 = db
+            .start_session("2025-05-20T15:00:00", None, None, Some(0.0))
+            .unwrap();
+
+        let r1 = db
+            .insert_map_run(&MapRun {
+                session_id: Some(s1),
+                duration_secs: 3600.0,
+                ..test_run()
+            })
+            .unwrap();
+        let r2 = db
+            .insert_map_run(&MapRun {
+                session_id: Some(s2),
+                duration_secs: 1800.0,
+                ..test_run()
+            })
+            .unwrap();
+        db.set_run_loot(
+            r1,
+            100.0,
+            &[LootItem {
+                name: "Chaos Orb".into(),
+                type_line: "Chaos Orb".into(),
+                stack_size: 100,
+                unit_chaos: Some(1.0),
+                total_chaos: Some(100.0),
+                frame_type: Some(5),
+            }],
+        )
+        .unwrap();
+        db.set_run_loot(
+            r2,
+            5.0,
+            &[LootItem {
+                name: "Chaos Orb".into(),
+                type_line: "Chaos Orb".into(),
+                stack_size: 5,
+                unit_chaos: Some(1.0),
+                total_chaos: Some(5.0),
+                frame_type: Some(5),
+            }],
+        )
+        .unwrap();
+
+        let s1_rates = db
+            .get_items_per_hour(&ItemRateScope::Session { id: s1 })
+            .unwrap();
+        assert_eq!(s1_rates.len(), 1);
+        assert_eq!(s1_rates[0].stacks, 100);
+        assert!((s1_rates[0].items_per_hour - 100.0).abs() < 0.1);
+
+        let s2_rates = db
+            .get_items_per_hour(&ItemRateScope::Session { id: s2 })
+            .unwrap();
+        assert_eq!(s2_rates[0].stacks, 5);
+        // 5 stacks over 1800s = 10 stacks/hr.
+        assert!((s2_rates[0].items_per_hour - 10.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn items_per_hour_current_session_falls_back_to_all_time() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        // No active session — `CurrentSession` should behave like `AllTime`.
+        let r1 = db
+            .insert_map_run(&MapRun {
+                duration_secs: 3600.0,
+                ..test_run()
+            })
+            .unwrap();
+        db.set_run_loot(
+            r1,
+            50.0,
+            &[LootItem {
+                name: "Chaos Orb".into(),
+                type_line: "Chaos Orb".into(),
+                stack_size: 50,
+                unit_chaos: Some(1.0),
+                total_chaos: Some(50.0),
+                frame_type: Some(5),
+            }],
+        )
+        .unwrap();
+        let rates = db
+            .get_items_per_hour(&ItemRateScope::CurrentSession)
+            .unwrap();
+        assert_eq!(rates.len(), 1);
+        assert!((rates[0].items_per_hour - 50.0).abs() < 0.1);
+
+        // Opening a real session shifts CurrentSession to track only that
+        // session's runs — which is empty here.
+        db.start_session("2025-05-20T14:00:00", None, None, Some(0.0))
+            .unwrap();
+        let scoped = db
+            .get_items_per_hour(&ItemRateScope::CurrentSession)
+            .unwrap();
+        assert!(scoped.is_empty(), "active session with no loot → no rows");
+    }
+
+    #[test]
+    fn items_per_hour_last_sessions_window() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        // Three closed sessions in increasing time; loot only in the newest two.
+        for h in 10..=12 {
+            let start = format!("2025-05-20T{h:02}:00:00");
+            let id = db.start_session(&start, None, None, Some(0.0)).unwrap();
+            let r = db
+                .insert_map_run(&MapRun {
+                    session_id: Some(id),
+                    duration_secs: 3600.0,
+                    started_at: start.clone(),
+                    ..test_run()
+                })
+                .unwrap();
+            if h >= 11 {
+                db.set_run_loot(
+                    r,
+                    10.0,
+                    &[LootItem {
+                        name: "Chaos Orb".into(),
+                        type_line: "Chaos Orb".into(),
+                        stack_size: 10,
+                        unit_chaos: Some(1.0),
+                        total_chaos: Some(10.0),
+                        frame_type: Some(5),
+                    }],
+                )
+                .unwrap();
+            }
+            db.end_session(id, &format!("2025-05-20T{h:02}:59:00"), Some(0.0))
+                .unwrap();
+        }
+        // Last 2 sessions → 20 chaos over 7200s = 10 chaos/hr.
+        let rates = db
+            .get_items_per_hour(&ItemRateScope::LastSessions { n: 2 })
+            .unwrap();
+        assert_eq!(rates.len(), 1);
+        assert_eq!(rates[0].stacks, 20);
+        assert!((rates[0].chaos_per_hour - 10.0).abs() < 0.1);
+        assert!((rates[0].active_secs - 7200.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn items_per_hour_zero_active_secs_avoids_divide_by_zero() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        let r = db
+            .insert_map_run(&MapRun {
+                duration_secs: 0.0,
+                ..test_run()
+            })
+            .unwrap();
+        db.set_run_loot(
+            r,
+            10.0,
+            &[LootItem {
+                name: "Chaos Orb".into(),
+                type_line: "Chaos Orb".into(),
+                stack_size: 10,
+                unit_chaos: Some(1.0),
+                total_chaos: Some(10.0),
+                frame_type: Some(5),
+            }],
+        )
+        .unwrap();
+        let rates = db.get_items_per_hour(&ItemRateScope::AllTime).unwrap();
+        assert_eq!(rates.len(), 1);
+        assert_eq!(rates[0].items_per_hour, 0.0);
+        assert_eq!(rates[0].chaos_per_hour, 0.0);
+        assert!(rates[0].total_chaos > 0.0); // unaffected
     }
 }

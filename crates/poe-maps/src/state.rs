@@ -148,6 +148,48 @@ pub struct ResourceSnapshot {
     pub timestamp: String,
 }
 
+/// Per-item-name aggregate over a chosen scope (Phase 6.7a). Drops, total chaos
+/// value, and the *per-hour* rates (using active map time as the denominator).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ItemRate {
+    pub name: String,
+    /// Where this row came from. For 6.7a always `"inventory"`; later sources
+    /// will be `"stash:bestiary"` (6.7b) and `"ocr:<key>"` (6.7c).
+    pub source: String,
+    /// Σ stack_size across all drops of this item in scope.
+    pub stacks: u32,
+    /// Number of distinct loot_items rows (independent of stack size).
+    pub drops: u32,
+    /// Σ total_chaos across all drops (NULL prices counted as 0).
+    pub total_chaos: f64,
+    /// Scope-wide sum of `map_runs.duration_secs` (idle excluded) — same value
+    /// across every row in the response. Returned so callers don't have to
+    /// recompute the rate themselves.
+    pub active_secs: f64,
+    /// `stacks / (active_secs / 3600)`. Zero when `active_secs == 0`.
+    pub items_per_hour: f64,
+    /// `total_chaos / (active_secs / 3600)`. Zero when `active_secs == 0`.
+    pub chaos_per_hour: f64,
+}
+
+/// Scope picker for `get_items_per_hour`. `CurrentSession` falls back to
+/// `AllTime` when no session is active. Wire-format is a serde-tagged enum so
+/// the TS binding stays a discriminated union.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ItemRateScope {
+    CurrentSession,
+    Session { id: i64 },
+    LastSessions { n: u32 },
+    AllTime,
+}
+
+impl Default for ItemRateScope {
+    fn default() -> Self {
+        Self::CurrentSession
+    }
+}
+
 pub enum StateEvent {
     MapCompleted(MapRun),
     StateChanged(TrackerState),

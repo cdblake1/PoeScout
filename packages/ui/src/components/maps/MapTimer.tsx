@@ -8,6 +8,7 @@ import {
   getMapSessions,
   getMapTypeStats,
   getNetWorthHistory,
+  getItemsPerHour,
   clearMapHistory,
   type TrackerState,
   type MapRun,
@@ -16,6 +17,8 @@ import {
   type MapTypeStat,
   type MapEncounter,
   type PortfolioSnapshot,
+  type ItemRate,
+  type ItemRateScope,
 } from "../../lib/tauri";
 
 function formatDuration(secs: number): string {
@@ -63,6 +66,8 @@ const MapTimer: Component = () => {
   const [sessions, setSessions] = createSignal<MapSession[]>([]);
   const [mapTypeStats, setMapTypeStats] = createSignal<MapTypeStat[]>([]);
   const [netWorth, setNetWorth] = createSignal<PortfolioSnapshot[]>([]);
+  const [itemRates, setItemRates] = createSignal<ItemRate[]>([]);
+  const [itemScope, setItemScope] = createSignal<ItemRateScope>({ kind: "current_session" });
   const [stats, setStats] = createSignal<MapStats>({
     total_runs: 0,
     avg_duration_secs: 0,
@@ -89,19 +94,36 @@ const MapTimer: Component = () => {
 
   const refreshData = async () => {
     try {
-      const [h, st, ses, mts, nw] = await Promise.all([
+      const [h, st, ses, mts, nw, ir] = await Promise.all([
         getMapHistory(50, 0),
         getMapStats(),
         getMapSessions(20, 0),
         getMapTypeStats(),
         getNetWorthHistory(50),
+        getItemsPerHour(itemScope()),
       ]);
       setHistory(h);
       setStats(st);
       setSessions(ses);
       setMapTypeStats(mts);
       setNetWorth(nw);
+      setItemRates(ir);
     } catch {}
+  };
+
+  const setScope = async (scope: ItemRateScope) => {
+    setItemScope(scope);
+    try {
+      setItemRates(await getItemsPerHour(scope));
+    } catch {}
+  };
+
+  const scopeLabel = () => {
+    const s = itemScope();
+    if (s.kind === "current_session") return "This session";
+    if (s.kind === "last_sessions") return `Last ${s.n}`;
+    if (s.kind === "all_time") return "All time";
+    return `Session #${s.id}`;
   };
 
   const clearHistory = async () => {
@@ -348,6 +370,82 @@ const MapTimer: Component = () => {
           </div>
         </div>
       </Show>
+
+      {/* Items per hour (6.7a) */}
+      <div class="bg-poe-surface border border-poe-border rounded">
+        <div class="px-3 py-2 border-b border-poe-border flex items-center justify-between">
+          <span class="text-poe-muted text-xs uppercase tracking-wide">Items / hr</span>
+          <div class="flex gap-1">
+            {(
+              [
+                ["This session", { kind: "current_session" }],
+                ["Last 5", { kind: "last_sessions", n: 5 }],
+                ["All time", { kind: "all_time" }],
+              ] as [string, ItemRateScope][]
+            ).map(([label, scope]) => (
+              <button
+                class={`text-xs px-2 py-0.5 rounded border ${
+                  scopeLabel() === label
+                    ? "border-poe-accent text-poe-accent"
+                    : "border-poe-border text-poe-muted hover:text-poe-accent"
+                }`}
+                onClick={() => setScope(scope)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <Show
+          when={itemRates().length > 0}
+          fallback={
+            <div class="px-3 py-4 text-poe-muted text-sm text-center">
+              No priced loot in this scope yet — needs a configured Character + stash credentials + at least one map completion.
+            </div>
+          }
+        >
+          <div class="px-3 py-1 text-poe-muted text-[11px]">
+            Denominator: active map time ={" "}
+            <span class="tabular-nums">
+              {formatDurationLong(itemRates()[0]?.active_secs ?? 0)}
+            </span>
+          </div>
+          <div class="max-h-72 overflow-y-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-poe-muted text-xs border-b border-poe-border">
+                  <th class="text-left px-3 py-1">Item</th>
+                  <th class="text-right px-3 py-1">Stacks</th>
+                  <th class="text-right px-3 py-1">Items/hr</th>
+                  <th class="text-right px-3 py-1">Chaos/hr</th>
+                  <th class="text-right px-3 py-1">Drops</th>
+                </tr>
+              </thead>
+              <tbody>
+                <For each={itemRates()}>
+                  {(ir) => (
+                    <tr class="border-b border-poe-border/50 hover:bg-poe-bg/50">
+                      <td class="px-3 py-1.5 text-poe-accent">{ir.name}</td>
+                      <td class="px-3 py-1.5 text-right tabular-nums">{ir.stacks}</td>
+                      <td class="px-3 py-1.5 text-right tabular-nums">
+                        {ir.items_per_hour > 0 ? ir.items_per_hour.toFixed(2) : "—"}
+                      </td>
+                      <td class="px-3 py-1.5 text-right text-green-400 tabular-nums">
+                        {ir.chaos_per_hour > 0
+                          ? Math.round(ir.chaos_per_hour).toLocaleString()
+                          : "—"}
+                      </td>
+                      <td class="px-3 py-1.5 text-right text-poe-muted tabular-nums">
+                        {ir.drops}
+                      </td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </div>
+        </Show>
+      </div>
 
       {/* History table */}
       <div class="bg-poe-surface border border-poe-border rounded">
