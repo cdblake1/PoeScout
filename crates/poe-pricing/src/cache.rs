@@ -66,6 +66,7 @@ mod tests {
             chaos_value: chaos,
             divine_value: None,
             icon: None,
+            count: None,
         }
     }
 

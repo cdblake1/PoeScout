@@ -11,8 +11,8 @@ use chrono::NaiveDateTime;
 use db::MapDb;
 use parser::LogEvent;
 use state::{
-    LootItem, MapRun, MapSession, MapStats, MapTypeStat, PortfolioSnapshot, ResourceSnapshot,
-    StateEvent, StateMachine, TrackerState,
+    ItemRate, ItemRateScope, LootItem, MapRun, MapSession, MapStats, MapTypeStat,
+    PortfolioSnapshot, ResourceSnapshot, StateEvent, StateMachine, TrackerState,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -131,6 +131,11 @@ impl MapTracker {
 
     pub fn get_map_type_stats(&self) -> Result<Vec<MapTypeStat>> {
         self.db.get_map_type_stats()
+    }
+
+    /// 6.7a: per-item-name rates over the chosen scope.
+    pub fn get_items_per_hour(&self, scope: &ItemRateScope) -> Result<Vec<ItemRate>> {
+        self.db.get_items_per_hour(scope)
     }
 
     pub fn insert_portfolio_snapshot(

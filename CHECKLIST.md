@@ -71,6 +71,15 @@ Run `npx --prefix packages/ui tauri dev` with Path of Exile open.
 - [ ] 6.5c: "poe.ninja listing-count threshold" in Settings filters low-confidence prices from the snapshot total
 - [ ] 6.5c: "Price-league override" in Settings fetches prices from a different league (e.g. `Standard`); stash fetches still use the game league
 
+## Phase 6.7 — Items / hr (needs GGG credentials + a character + map runs with priced loot)
+- [ ] 6.7a: Items/hr panel appears in the Maps tab (below Per-Map Stats, above Recent Runs)
+- [ ] 6.7a: with no priced loot yet, the empty state explains the requirements
+- [ ] 6.7a: scope toggle (This session / Last 5 / All time) re-queries — row counts and rates change
+- [ ] 6.7a: ordering is `chaos_per_hour` desc (Divine on top in a typical session, then chaos stacks, then splinters/fossils)
+- [ ] 6.7a: "Denominator: active map time = …" matches the sum of in-scope run durations (idle excluded)
+- [ ] 6.7a: `Items/hr` for Chaos Orbs scales as expected — double the maps in scope → roughly half the per-hour rate (since total stacks doubled but time also doubled)
+- [ ] 6.7a: switching scope to a session with no priced loot shows the empty state (not stale data)
+
 ## Phase 6.6 — OCR capture spike
 - [ ] Open PoE on screen; in Settings → click **Test PoE capture** → reports e.g. `1920×1080 — 87% non-black`
 - [ ] Non-black fraction ≥ 0.5 → `PrintWindow + PW_RENDERFULLCONTENT` works; safe to build OCR + calibration on top

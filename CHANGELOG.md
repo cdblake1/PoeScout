@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- **Items/hour view — Tier-1 (Phase 6.7a)** — answers "what is dropping at what rate" using data already captured by 6.3's inventory diff. No new APIs, no OCR.
+  - `get_items_per_hour(scope)` Tauri command (`scope` = `CurrentSession | Session{id} | LastSessions{n} | AllTime`; `CurrentSession` falls back to `AllTime` when no session is open).
+  - DB aggregation: `GROUP BY name` over `loot_items` filtered by scope-resolved run IDs; per-row `items_per_hour` and `chaos_per_hour` use `SUM(duration_secs)` (active map time, idle excluded) as the denominator. Returned ordered by `chaos_per_hour` DESC.
+  - `ItemRate { name, source, stacks, drops, total_chaos, active_secs, items_per_hour, chaos_per_hour }` — `source` is `"inventory"` for now; later 6.7 increments will add `"stash:bestiary"` (red beasts) and `"ocr:*"` (Hiveblood, Kingsmarch gold) using the same shape.
+  - **Items / hr** panel in the Maps tab (between Per-Map Stats and Recent Runs): scope-toggle pills (`This session | Last 5 | All time`), denominator displayed, empty state explaining the credential/character/loot requirements.
+  - 5 unit tests on the DB query (AllTime aggregation + ordering, Session scope isolation, CurrentSession fallback, LastSessions window, zero-active-secs guard).
+  - Fixed a latent test-only build bug in `poe-pricing/src/cache.rs` (`make_record` test helper missing `count: None` since 6.5c added the field).
 - **OCR capture spike + `resource_snapshots` foundation (Phase 6.6a)** — first 6.6 increment; gated on a 1-click verify:
   - `capture_poe_test` command tries `PrintWindow + PW_RENDERFULLCONTENT` on the PoE client area and returns `{width, height, non_black_fraction}` — no file I/O, no heavy deps. Declares `PrintWindow` via `extern` because the metadata-trimmed `windows` bindings don't expose it; adds the `Win32_Graphics_Gdi` feature.
   - Debug section in Settings → **Test PoE capture** button shows e.g. `1920×1080 — 87% non-black`.

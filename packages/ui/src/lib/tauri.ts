@@ -285,6 +285,31 @@ export async function getMapTypeStats(): Promise<MapTypeStat[]> {
   return invoke("get_map_type_stats");
 }
 
+// Items per hour (6.7a)
+
+/** Discriminated union mirroring `ItemRateScope` in Rust (`#[serde(tag="kind")]`). */
+export type ItemRateScope =
+  | { kind: "current_session" }
+  | { kind: "session"; id: number }
+  | { kind: "last_sessions"; n: number }
+  | { kind: "all_time" };
+
+export interface ItemRate {
+  name: string;
+  /** "inventory" for 6.7a; later: "stash:bestiary", "ocr:<key>". */
+  source: string;
+  stacks: number;
+  drops: number;
+  total_chaos: number;
+  active_secs: number;
+  items_per_hour: number;
+  chaos_per_hour: number;
+}
+
+export async function getItemsPerHour(scope: ItemRateScope): Promise<ItemRate[]> {
+  return invoke("get_items_per_hour", { scope });
+}
+
 export async function getNetWorthHistory(limit: number): Promise<PortfolioSnapshot[]> {
   return invoke("get_net_worth_history", { limit });
 }
