@@ -79,6 +79,11 @@ Run `npx --prefix packages/ui tauri dev` with Path of Exile open.
 - [ ] 6.7a: "Denominator: active map time = …" matches the sum of in-scope run durations (idle excluded)
 - [ ] 6.7a: `Items/hr` for Chaos Orbs scales as expected — double the maps in scope → roughly half the per-hour rate (since total stacks doubled but time also doubled)
 - [ ] 6.7a: switching scope to a session with no priced loot shows the empty state (not stale data)
+- [ ] 6.7a-polish (sort): clicking a column header sorts by it; same header toggles ▲/▼; default is Chaos/hr ▼
+- [ ] 6.7a-polish (pin): clicking ☆ pins an item to the top (★); it stays pinned across scope switches AND after an app restart (localStorage); unpin returns it to sorted position
+- [ ] 6.7a-polish (pin+sort): pinned rows always sit above unpinned; changing the sort reorders within each group
+- [ ] 6.7a-polish (DateRange): **Custom…** reveals from/to date inputs; Apply re-queries to only runs in that day-range (inclusive both ends); denominator matches those runs; reversed from/to still works
+- [ ] 6.7a-polish (DateRange): a custom range with no priced loot shows the empty state, not stale rows; clicking a preset pill hides the custom row and re-queries
 
 ## Phase 6.6 — OCR capture spike
 - [ ] Open PoE on screen; in Settings → click **Test PoE capture** → reports e.g. `1920×1080 — 87% non-black`
