@@ -602,9 +602,12 @@ impl MapDb {
         let conn = self.conn.lock().unwrap();
         // Resolve scope → SQL filter + bind params; CurrentSession runs an extra
         // lookup against map_sessions and degrades to AllTime if nothing's open.
-        let (where_clause, params): (String, Vec<i64>) = match scope {
+        use rusqlite::types::Value;
+        let (where_clause, params): (String, Vec<Value>) = match scope {
             ItemRateScope::AllTime => ("1 = 1".into(), vec![]),
-            ItemRateScope::Session { id } => ("session_id = ?1".into(), vec![*id]),
+            ItemRateScope::Session { id } => {
+                ("session_id = ?1".into(), vec![Value::Integer(*id)])
+            }
             ItemRateScope::CurrentSession => {
                 let active_id: Option<i64> = conn
                     .query_row(
@@ -615,7 +618,7 @@ impl MapDb {
                     )
                     .ok();
                 match active_id {
-                    Some(id) => ("session_id = ?1".into(), vec![id]),
+                    Some(id) => ("session_id = ?1".into(), vec![Value::Integer(id)]),
                     None => ("1 = 1".into(), vec![]),
                 }
             }
@@ -625,18 +628,23 @@ impl MapDb {
                     ORDER BY started_at DESC LIMIT ?1
                 )"
                 .into(),
-                vec![*n as i64],
+                vec![Value::Integer(*n as i64)],
+            ),
+            ItemRateScope::DateRange { start, end } => (
+                // Lexical prefix compare on the YYYY-MM-DD head of started_at —
+                // timezone-safe (no SQLite date() interpretation), inclusive both ends.
+                "substr(started_at, 1, 10) BETWEEN ?1 AND ?2".into(),
+                vec![Value::Text(start.clone()), Value::Text(end.clone())],
             ),
         };
 
         let active_sql = format!(
             "SELECT COALESCE(SUM(duration_secs), 0) FROM map_runs WHERE {where_clause}"
         );
-        let active_secs: f64 = match params.len() {
-            0 => conn.query_row(&active_sql, [], |r| r.get(0))?,
-            1 => conn.query_row(&active_sql, [params[0]], |r| r.get(0))?,
-            _ => unreachable!("scope binds at most one parameter"),
-        };
+        let active_secs: f64 =
+            conn.query_row(&active_sql, rusqlite::params_from_iter(params.iter()), |r| {
+                r.get(0)
+            })?;
 
         let items_sql = format!(
             "SELECT name,
@@ -675,13 +683,9 @@ impl MapDb {
                 chaos_per_hour,
             })
         };
-        let rows = match params.len() {
-            0 => stmt.query_map([], map_row)?.collect::<Result<Vec<_>, _>>()?,
-            1 => stmt
-                .query_map([params[0]], map_row)?
-                .collect::<Result<Vec<_>, _>>()?,
-            _ => unreachable!(),
-        };
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(params.iter()), map_row)?
+            .collect::<Result<Vec<_>, _>>()?;
         // Sort in Rust (SQL ORDER BY would require duplicating the expression).
         let mut rows = rows;
         rows.sort_by(|a, b| {
@@ -1407,5 +1411,48 @@ mod tests {
         assert_eq!(rates[0].items_per_hour, 0.0);
         assert_eq!(rates[0].chaos_per_hour, 0.0);
         assert!(rates[0].total_chaos > 0.0); // unaffected
+    }
+
+    #[test]
+    fn items_per_hour_date_range_filters_by_day_inclusive() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        // One run per day, 3600s each. The range [06-10, 06-15] must include
+        // both boundary days and exclude 06-01 and 06-20.
+        let day = |d: &str| MapRun {
+            started_at: format!("{d}T14:00:00"),
+            ended_at: format!("{d}T15:00:00"),
+            duration_secs: 3600.0,
+            ..test_run()
+        };
+        let div = |stack: u32| LootItem {
+            name: "Divine Orb".into(),
+            type_line: "Divine Orb".into(),
+            stack_size: stack,
+            unit_chaos: Some(100.0),
+            total_chaos: Some(100.0 * stack as f64),
+            frame_type: Some(5),
+        };
+        for (d, stack) in [
+            ("2026-06-01", 1), // before — excluded
+            ("2026-06-10", 2), // start boundary — included
+            ("2026-06-15", 3), // end boundary — included
+            ("2026-06-20", 9), // after — excluded
+        ] {
+            let r = db.insert_map_run(&day(d)).unwrap();
+            db.set_run_loot(r, 100.0, &[div(stack)]).unwrap();
+        }
+
+        let rates = db
+            .get_items_per_hour(&ItemRateScope::DateRange {
+                start: "2026-06-10".into(),
+                end: "2026-06-15".into(),
+            })
+            .unwrap();
+        assert_eq!(rates.len(), 1);
+        assert_eq!(rates[0].name, "Divine Orb");
+        assert_eq!(rates[0].stacks, 5); // 2 + 3, boundary days in; 1 and 9 out
+        assert!((rates[0].active_secs - 7200.0).abs() < 0.001); // two 1h runs
+        assert!((rates[0].items_per_hour - 2.5).abs() < 0.01); // 5 stacks / 2h
     }
 }

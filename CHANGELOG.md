@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- **Items/hour polish (Phase 6.7a)** — the three deferred polish items on the Items/hr panel:
+  - **DateRange scope** — new `ItemRateScope::DateRange { start, end }` (calendar-day range, inclusive both ends) filtering runs by `substr(started_at,1,10) BETWEEN ?1 AND ?2` (lexical prefix compare — timezone-safe, no SQLite `date()` interpretation). Surfaced as a **Custom…** pill with from/to date inputs. The scope→params resolver was refactored from a fixed `Vec<i64>` (`match params.len()`) to `Vec<rusqlite::types::Value>` + `params_from_iter`, so a scope can bind mixed-type / multi params. 1 new DB unit test (boundary-day inclusivity).
+  - **Client-side column sort** — clickable Items/hr table headers; clicking a column sorts by it and toggles asc/desc (default Chaos/hr desc); a new column resets to its sensible default (name asc, numbers desc).
+  - **Pinned items** — a per-row pin toggle floats an item to the top of the table in every scope; the pin set is keyed by item name and persisted in `localStorage` (client-only). Pinned rows always sit above unpinned, with the active sort applied within each group.
 - **Items/hour view — Tier-1 (Phase 6.7a)** — answers "what is dropping at what rate" using data already captured by 6.3's inventory diff. No new APIs, no OCR.
   - `get_items_per_hour(scope)` Tauri command (`scope` = `CurrentSession | Session{id} | LastSessions{n} | AllTime`; `CurrentSession` falls back to `AllTime` when no session is open).
   - DB aggregation: `GROUP BY name` over `loot_items` filtered by scope-resolved run IDs; per-row `items_per_hour` and `chaos_per_hour` use `SUM(duration_secs)` (active map time, idle excluded) as the denominator. Returned ordered by `chaos_per_hour` DESC.

@@ -127,7 +127,7 @@ is already in `loot_items` — we just don't aggregate by item name.
 - [x] UI: **Items/hr** panel between Per-Map Stats and Recent Runs; columns Item · Stacks · Items/hr · Chaos/hr · Drops; scope toggle pills (`This session | Last 5 | All time`); empty state spells out the credential/character/loot requirements.
 - [x] 5 DB unit tests (AllTime ordering, Session isolation, CurrentSession fallback, LastSessions window, zero-active-secs guard).
 - [x] CHECKLIST entry under "Phase 6.7" for live verification.
-- [ ] (Polish, deferred) Pinned items setting; client-side header-click sort; DateRange scope.
+- [x] (Polish) Pinned items (pin-to-top, localStorage); client-side header-click sort; DateRange scope (`substr(started_at,1,10) BETWEEN` filter + Custom-range date inputs).
 
 #### 6.7b — Tier-2 special stash tabs (after 6.7a)
 - [ ] Extend `StashClient::fetch_stash_tab` to handle Bestiary tab (and Map / Currency tabs if cheap). Reuse `diff_inventory` shape.

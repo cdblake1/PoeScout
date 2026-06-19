@@ -292,7 +292,8 @@ export type ItemRateScope =
   | { kind: "current_session" }
   | { kind: "session"; id: number }
   | { kind: "last_sessions"; n: number }
-  | { kind: "all_time" };
+  | { kind: "all_time" }
+  | { kind: "date_range"; start: string; end: string };
 
 export interface ItemRate {
   name: string;

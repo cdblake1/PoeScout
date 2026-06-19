@@ -182,6 +182,9 @@ pub enum ItemRateScope {
     Session { id: i64 },
     LastSessions { n: u32 },
     AllTime,
+    /// Calendar-day range, inclusive of both ends. `start`/`end` are
+    /// `YYYY-MM-DD` strings compared against the date prefix of `started_at`.
+    DateRange { start: String, end: String },
 }
 
 impl Default for ItemRateScope {
