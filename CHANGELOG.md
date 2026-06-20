@@ -3,6 +3,19 @@
 ## Unreleased
 
 ### Added
+- **Mechanic detection accuracy + honesty + OCR + ToS-safe data strategy (Phase 6.9)** — after live testing and a citation-backed research pass on GGG's ToS and every legitimate client data source (`docs/poe-mechanics-resources.md` "Detection limits & ToS"):
+  - **Player-chat filter** — the parser now rejects chat channels (`#`/`$`/`%`/`&`/`@`/`<GUILD>`) before NPC matching, so a player named after a league NPC can no longer trigger a false mechanic.
+  - **Maven mislabel fixed** — `The Maven`/`The Envoy` removed from NPC presence (they narrate *witnessed* map bosses during normal atlas play); genuine Maven content is detected via boss arenas.
+  - **Broader coverage** — `AREA_MECHANICS` gains the 53 Vaal corrupted side areas, 9 Expedition logbook side-areas, Affliction/Settlers/Tane boss arenas, the Syndicate safehouse, and the Kalandra lake (porting TraXile's fuller tables — same log-only technique and ceiling).
+  - **Honesty in the UI** — the Maps "League Mechanics" panel always renders when runs exist, with an empty-state line and a permanent footer listing what is *not* log-detectable (in-map Breach/Legion/Ritual/Metamorph/Abyss, Eldritch influence, often Harvest).
+  - **Rate-limit-aware GGG API client** — `poe-stash` now paces requests from `X-Rate-Limit-*` headers and, on 429, honors `Retry-After`/backoff and retries up to 3× instead of erroring (we hit a real 429 in testing).
+  - **Opt-in OCR resource reader (6.6b)** — `Windows.Media.Ocr` over a calibrated client-area rectangle reads on-screen numbers (Kingsmarch gold, Sulphite, Hiveblood) into the `resource_snapshots` series (`ocr:<key>`); commands `ocr_region`, `record_resource_ocr`, `get_resource_snapshots`; a calibration panel in Settings. Honest scope: numeric panels, not mechanic presence.
+
+### Fixed
+- **Distinct map instances on a shared gateway no longer merge** — run identity now keys on the per-instance map *seed* (`Generating … with seed S`) instead of the `Connecting to instance server` endpoint, which is a shared gateway address. Two back-to-back maps on the same gateway were being merged into one run.
+- **In-progress run is now visible + NPC mechanics update live** — `TrackerState::InMap` carries its encounters and an NPC-dialogue match now emits a state-change event (previously silent); the Maps tab shows a live "in progress" row with mechanic chips.
+
+### Added (earlier)
 - **League mechanic tracking (Phase 6.8)** — TraXile-style per-map mechanic detection + stats, all from `Client.txt` (no OCR, no new APIs, no DB migration — reuses the `map_encounters` model).
   - **Area-based detection ("Mechanism B")** — new `areas::mechanic_for_area`: entering a dedicated area with no NPC line (Legion `Domain of Timeless Conflict`, the 5 Simulacrum waves, Breachstone Domains, Sanctum floors, Temple of Atzoatl, Expedition logbook zones, Lab trials, pinnacle boss arenas, Abyssal Depths) records a `MapEncounter` on the current run (the parent map for sub-areas), deduped per category. Previously area names drove only run lifecycle, never mechanic tagging.
   - **NPC dialogue expansion ("Mechanism A")** — `data/encounters.json` grown from 15 NPCs/2 quotes to cover Heist rogues (9), Sanctum (Lycia), Ultimatum (Trialmaster), Ancestor (Navali), Memory Tear (Eagon), and all 6 Einhar beast-capture lines (`kind:"capture"`, yellow/red detail, counted individually). Ported from TraXile + Exile Diary Reborn (both MIT).

@@ -88,6 +88,15 @@ on-screen OCR (6.6). Full per-mechanic catalog for 3.28 Mirage lives in
 that doc each league.
 
 ### Remaining
+- [x] **6.9** detection accuracy + honesty + OCR + ToS strategy — chat-channel
+      filter in the parser; removed misleading Maven/Envoy presence; ported
+      TraXile's fuller area tables (Vaal/logbook-side/bosses/safehouse/lake);
+      "not log-detectable" honesty note in the Maps UI; rate-limit-aware GGG API
+      client (honors `X-Rate-Limit-*`/`Retry-After`, backs off on 429); opt-in
+      OCR resource reader (`Windows.Media.Ocr` → `resource_snapshots`) with a
+      Settings calibration panel — this completes **6.6b**. Also fixed: seed-based
+      run identity (no more same-gateway map merges) + live in-progress run row.
+      Research + guardrails in `docs/poe-mechanics-resources.md`.
 - [x] **6.8** league mechanic tracking (TraXile-style) — per-map mechanic
       detection from `Client.txt` via two mechanisms: NPC dialogue
       (`data/encounters.json`, expanded to Heist/Sanctum/Ultimatum/Ancestor +
@@ -97,7 +106,10 @@ that doc each league.
       `get_map_history_by_mechanic`; **League Mechanics** table + clickable filter
       in the Maps tab. Reuses `map_encounters` (no migration). Detection-signal
       catalog + untrackables documented in `docs/poe-mechanics-resources.md`.
-- [ ] **6.6b** real OCR + calibration UI — blocked on the spike result. If
+- [x] **6.6b** real OCR + calibration UI — DONE in 6.9 (`Windows.Media.Ocr`
+      over a calibrated rectangle → `resource_snapshots`; Settings panel). Note
+      below kept for history:
+- [ ] ~~**6.6b** real OCR + calibration UI~~ — blocked on the spike result. If
       `non_black_fraction ≥ ~0.5` → `Windows.Media.Ocr` digit reader +
       drag-a-box calibration UI + session-boundary reads writing to
       `resource_snapshots`. If ≈ 0 → fall back to `Windows.Graphics.Capture`
