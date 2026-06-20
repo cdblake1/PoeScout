@@ -15,6 +15,11 @@ pub enum LogEvent {
         timestamp: NaiveDateTime,
         area_level: u32,
         area_id: String,
+        /// Per-instance seed from `… with seed N`. Distinct map instances have
+        /// distinct seeds — this is the only reliable instance identity in the
+        /// log (the "instance server" endpoint is a shared gateway address, not
+        /// per-instance). `None` if the line had no seed.
+        seed: Option<u64>,
     },
     /// `Connecting to instance server at <ip>:<port>` — the instance endpoint,
     /// used to resume the same run after a town portal instead of starting a new one.
@@ -51,7 +56,7 @@ static RE_TIMESTAMP: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})").unwrap());
 
 static RE_GENERATING: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"Generating level (\d+) area "([^"]+)""#).unwrap());
+    LazyLock::new(|| Regex::new(r#"Generating level (\d+) area "([^"]+)"(?: with seed (\d+))?"#).unwrap());
 
 // Anchored to the `] : ` system-message prefix so NPC dialogue can't false-match.
 static RE_ENTERED: LazyLock<Regex> =
@@ -79,10 +84,12 @@ pub fn parse_line(line: &str) -> Option<LogEvent> {
 
     if let Some(caps) = RE_GENERATING.captures(line) {
         let level: u32 = caps[1].parse().ok()?;
+        let seed = caps.get(3).and_then(|m| m.as_str().parse::<u64>().ok());
         return Some(LogEvent::AreaLevelHint {
             timestamp: ts,
             area_level: level,
             area_id: caps[2].to_string(),
+            seed,
         });
     }
 
@@ -152,10 +159,12 @@ mod tests {
             LogEvent::AreaLevelHint {
                 area_level,
                 area_id,
+                seed,
                 ..
             } => {
                 assert_eq!(area_level, 83);
                 assert_eq!(area_id, "MapWorldsStrand");
+                assert_eq!(seed, Some(12345));
             }
             _ => panic!("expected AreaLevelHint"),
         }

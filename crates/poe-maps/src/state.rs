@@ -224,6 +224,8 @@ struct RunAcc {
     area_type: AreaType,
     map_tier: Option<u32>,
     instance_id: Option<String>,
+    /// Per-instance map seed — the run-identity key (see `same_run`).
+    seed: Option<u64>,
     started_at: NaiveDateTime,
     deaths: u32,
     level_ups: Vec<u32>,
@@ -273,6 +275,8 @@ pub struct StateMachine {
     inner: InnerState,
     pending_level: Option<u32>,
     pending_area_id: Option<String>,
+    /// Seed from the most recent `Generating … with seed N`, applied to the next area.
+    pending_seed: Option<u64>,
     /// Most recent `Connecting to instance server at` endpoint, applied to the next area.
     current_instance: Option<String>,
     league: Option<String>,
@@ -289,15 +293,24 @@ fn is_idle_type(t: AreaType) -> bool {
     matches!(t, AreaType::Town | AreaType::Hideout | AreaType::Hub)
 }
 
-/// Is this the same run we're resuming? Prefer instance endpoint, then area id, then name.
-fn same_run(run: &RunAcc, area_id: Option<&str>, area_name: &str, endpoint: Option<&str>) -> bool {
-    if let (Some(a), Some(b)) = (run.instance_id.as_deref(), endpoint) {
-        return a == b;
+/// Is this the same map instance (resume) or a different one (new run)?
+///
+/// Identity is the **seed**: distinct instances have distinct seeds. The
+/// "instance server" endpoint is a shared gateway address, NOT per-instance, so
+/// it must not be used — two different maps routed through the same gateway would
+/// otherwise merge. When the incoming area carries no fresh seed (re-entering an
+/// existing instance via a town portal logs no `Generating` line), fall back to
+/// area identity to resume the suspended run.
+fn same_run(run: &RunAcc, area_id: Option<&str>, area_name: &str, seed: Option<u64>) -> bool {
+    match (run.seed, seed) {
+        // Both freshly generated → same instance iff identical seed.
+        (Some(a), Some(b)) => a == b,
+        // No fresh seed (portal back to an existing instance) → same if same area.
+        _ => match (run.area_id.as_deref(), area_id) {
+            (Some(a), Some(b)) => a == b,
+            _ => run.map_name == area_name,
+        },
     }
-    if let (Some(a), Some(b)) = (run.area_id.as_deref(), area_id) {
-        return a == b;
-    }
-    run.map_name == area_name
 }
 
 impl StateMachine {
@@ -310,6 +323,7 @@ impl StateMachine {
             },
             pending_level: None,
             pending_area_id: None,
+            pending_seed: None,
             current_instance: None,
             league: None,
             character: None,
@@ -350,6 +364,7 @@ impl StateMachine {
         area_level: Option<u32>,
         atype: AreaType,
         endpoint: Option<String>,
+        seed: Option<u64>,
         started_at: NaiveDateTime,
     ) -> RunAcc {
         let map_tier = if atype == AreaType::Map {
@@ -364,6 +379,7 @@ impl StateMachine {
             area_type: atype,
             map_tier,
             instance_id: endpoint,
+            seed,
             started_at,
             deaths: 0,
             level_ups: Vec::new(),
@@ -415,10 +431,12 @@ impl StateMachine {
             LogEvent::AreaLevelHint {
                 area_level,
                 area_id,
+                seed,
                 ..
             } => {
                 self.pending_level = Some(area_level);
                 self.pending_area_id = Some(area_id);
+                self.pending_seed = seed;
                 // If already in a map whose level is unknown, backfill it.
                 if let InnerState::InMap { ref mut run } = self.inner {
                     if run.area_level.is_none() {
@@ -442,6 +460,7 @@ impl StateMachine {
             } => {
                 let area_id = self.pending_area_id.take();
                 let area_level = self.pending_level.take();
+                let seed = self.pending_seed.take();
                 let atype = classify(area_id.as_deref(), &area_name);
                 let endpoint = self.current_instance.clone();
                 // Area-based mechanic (Legion Domain, Simulacrum, Breachstone, …):
@@ -490,7 +509,7 @@ impl StateMachine {
                             since, suspended, ..
                         } => {
                             if let Some(mut run) = suspended {
-                                if same_run(&run, area_id.as_deref(), &area_name, endpoint.as_deref())
+                                if same_run(&run, area_id.as_deref(), &area_name, seed)
                                 {
                                     // Returned to the same instance after a town trip → resume.
                                     run.hideout_secs +=
@@ -503,7 +522,7 @@ impl StateMachine {
                                     ));
                                     self.inner = InnerState::InMap {
                                         run: self.new_run(
-                                            area_name, area_id, area_level, atype, endpoint,
+                                            area_name, area_id, area_level, atype, endpoint, seed,
                                             timestamp,
                                         ),
                                     };
@@ -511,14 +530,15 @@ impl StateMachine {
                             } else {
                                 self.inner = InnerState::InMap {
                                     run: self.new_run(
-                                        area_name, area_id, area_level, atype, endpoint, timestamp,
+                                        area_name, area_id, area_level, atype, endpoint, seed,
+                                        timestamp,
                                     ),
                                 };
                             }
                         }
                         InnerState::InMap { run } => {
                             if atype == AreaType::Map {
-                                if same_run(&run, area_id.as_deref(), &area_name, endpoint.as_deref())
+                                if same_run(&run, area_id.as_deref(), &area_name, seed)
                                 {
                                     // Re-entered the same map (no town between) → ignore.
                                     self.inner = InnerState::InMap { run };
@@ -528,7 +548,7 @@ impl StateMachine {
                                     ));
                                     self.inner = InnerState::InMap {
                                         run: self.new_run(
-                                            area_name, area_id, area_level, atype, endpoint,
+                                            area_name, area_id, area_level, atype, endpoint, seed,
                                             timestamp,
                                         ),
                                     };
@@ -642,6 +662,9 @@ mod tests {
             timestamp: ts(time),
             area_level: level,
             area_id: format!("MapWorlds{name}"),
+            // Distinct instances get distinct seeds; key it off `time` so each
+            // fresh map entry in a test is a unique instance.
+            seed: Some(time as u64),
         });
         sm.process(LogEvent::AreaChange {
             timestamp: ts(time + 1),
@@ -738,6 +761,22 @@ mod tests {
     }
 
     #[test]
+    fn distinct_instances_same_map_do_not_merge() {
+        // Regression: two different Canyon maps share the SAME gateway endpoint
+        // (the "instance server" address is not per-instance), with a town trip
+        // between. They must be two runs — only the seed distinguishes instances.
+        let mut sm = StateMachine::new(ts(0));
+        let gw = "64.87.41.225:6112";
+        enter_map_inst(&mut sm, 10, "Canyon", 83, gw); // seed 10
+        enter_hideout(&mut sm, 120, gw); // town trip on the same gateway
+        let evts = enter_map_inst(&mut sm, 180, "Canyon", 83, gw); // seed 180 → new instance
+        let done = completed(&evts);
+        assert_eq!(done.len(), 1, "first Canyon must finalize, not merge");
+        assert_eq!(done[0].map_name, "Canyon");
+        assert!(matches!(sm.state(), TrackerState::InMap { map_name, .. } if map_name == "Canyon"));
+    }
+
+    #[test]
     fn direct_map_to_map_completes_previous() {
         let mut sm = StateMachine::new(ts(0));
         enter_map(&mut sm, 10, "Strand", 83);
@@ -768,6 +807,7 @@ mod tests {
             timestamp: ts(40),
             area_level: 83,
             area_id: "VaalCity".into(),
+            seed: Some(40),
         });
         let evts = sm.process(LogEvent::AreaChange {
             timestamp: ts(41),
