@@ -78,6 +78,22 @@ pub async fn get_map_type_stats(
 }
 
 #[tauri::command]
+pub async fn get_map_history_by_mechanic(
+    category: String,
+    limit: u32,
+    offset: u32,
+    tracker_state: State<'_, MapTrackerState>,
+) -> Result<Vec<MapRun>, String> {
+    let guard = tracker_state.lock().await;
+    match &*guard {
+        Some(tracker) => tracker
+            .get_history_by_mechanic(&category, limit, offset)
+            .map_err(|e| e.to_string()),
+        None => Ok(vec![]),
+    }
+}
+
+#[tauri::command]
 pub async fn get_mechanic_stats(
     tracker_state: State<'_, MapTrackerState>,
 ) -> Result<Vec<MechanicStat>, String> {

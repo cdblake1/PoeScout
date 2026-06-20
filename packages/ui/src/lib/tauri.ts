@@ -301,6 +301,14 @@ export async function getMechanicStats(): Promise<MechanicStat[]> {
   return invoke("get_mechanic_stats");
 }
 
+export async function getMapHistoryByMechanic(
+  category: string,
+  limit: number,
+  offset: number
+): Promise<MapRun[]> {
+  return invoke("get_map_history_by_mechanic", { category, limit, offset });
+}
+
 // Items per hour (6.7a)
 
 /** Discriminated union mirroring `ItemRateScope` in Rust (`#[serde(tag="kind")]`). */

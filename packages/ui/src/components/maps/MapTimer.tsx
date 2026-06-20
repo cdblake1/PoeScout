@@ -8,6 +8,7 @@ import {
   getMapSessions,
   getMapTypeStats,
   getMechanicStats,
+  getMapHistoryByMechanic,
   getNetWorthHistory,
   getItemsPerHour,
   clearMapHistory,
@@ -89,6 +90,7 @@ const MapTimer: Component = () => {
   const [sessions, setSessions] = createSignal<MapSession[]>([]);
   const [mapTypeStats, setMapTypeStats] = createSignal<MapTypeStat[]>([]);
   const [mechanicStats, setMechanicStats] = createSignal<MechanicStat[]>([]);
+  const [mechanicFilter, setMechanicFilter] = createSignal<string | null>(null);
   const [netWorth, setNetWorth] = createSignal<PortfolioSnapshot[]>([]);
   const [itemRates, setItemRates] = createSignal<ItemRate[]>([]);
   const [itemScope, setItemScope] = createSignal<ItemRateScope>({ kind: "current_session" });
@@ -122,10 +124,24 @@ const MapTimer: Component = () => {
     }, 1000);
   };
 
+  const loadHistory = () => {
+    const f = mechanicFilter();
+    return f ? getMapHistoryByMechanic(f, 50, 0) : getMapHistory(50, 0);
+  };
+
+  /// Set (or clear, with null) the mechanic history filter and reload the list.
+  const filterByMechanic = async (category: string | null) => {
+    // Toggle off if clicking the active filter again.
+    setMechanicFilter(mechanicFilter() === category ? null : category);
+    try {
+      setHistory(await loadHistory());
+    } catch {}
+  };
+
   const refreshData = async () => {
     try {
       const [h, st, ses, mts, mech, nw, ir] = await Promise.all([
-        getMapHistory(50, 0),
+        loadHistory(),
         getMapStats(),
         getMapSessions(20, 0),
         getMapTypeStats(),
@@ -475,7 +491,13 @@ const MapTimer: Component = () => {
               <tbody>
                 <For each={mechanicStats()}>
                   {(m) => (
-                    <tr class="border-b border-poe-border/50 hover:bg-poe-bg/50">
+                    <tr
+                      class={`border-b border-poe-border/50 hover:bg-poe-bg/50 cursor-pointer ${
+                        mechanicFilter() === m.category ? "bg-poe-bg/60" : ""
+                      }`}
+                      onClick={() => filterByMechanic(m.category)}
+                      title="Filter Recent Runs by this mechanic"
+                    >
                       <td class="px-3 py-1.5 text-poe-accent">{m.category}</td>
                       <td class="px-3 py-1.5 text-right">{m.maps_with}</td>
                       <td class="px-3 py-1.5 text-right tabular-nums">
@@ -638,7 +660,18 @@ const MapTimer: Component = () => {
       {/* History table */}
       <div class="bg-poe-surface border border-poe-border rounded">
         <div class="px-3 py-2 border-b border-poe-border text-poe-muted text-xs uppercase tracking-wide flex items-center justify-between">
-          <span>Recent Runs</span>
+          <span class="flex items-center gap-2">
+            Recent Runs
+            <Show when={mechanicFilter()}>
+              <button
+                class="normal-case text-poe-accent hover:text-poe-text text-xs border border-poe-accent/50 rounded px-1.5 py-0.5"
+                onClick={() => filterByMechanic(null)}
+                title="Clear mechanic filter"
+              >
+                {mechanicFilter()} ✕
+              </button>
+            </Show>
+          </span>
           <Show when={history().length > 0}>
             <button
               class="normal-case text-poe-muted hover:text-red-400 text-xs"
@@ -677,7 +710,13 @@ const MapTimer: Component = () => {
                           <div class="flex flex-wrap gap-1 mt-0.5">
                             <For each={encounterCategories(run.encounters)}>
                               {(c) => (
-                                <span class="text-[10px] px-1 rounded bg-poe-bg text-poe-muted border border-poe-border">
+                                <span
+                                  class={`text-[10px] px-1 rounded bg-poe-bg text-poe-muted border border-poe-border cursor-pointer hover:text-poe-accent ${
+                                    mechanicFilter() === c ? "border-poe-accent text-poe-accent" : ""
+                                  }`}
+                                  onClick={() => filterByMechanic(c)}
+                                  title="Filter Recent Runs by this mechanic"
+                                >
                                   {c}
                                 </span>
                               )}

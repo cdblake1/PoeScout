@@ -234,6 +234,61 @@ impl MapDb {
         Ok(runs)
     }
 
+    /// Like `get_history`, but only runs that contain at least one encounter of
+    /// the given mechanic `category` (6.8 history filter).
+    pub fn get_history_by_mechanic(
+        &self,
+        category: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<MapRun>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, map_name, area_id, area_level, area_type, map_tier, instance_id, league,
+                    session_id, started_at, ended_at, duration_secs, hideout_secs, deaths, level_ups,
+                    loot_chaos
+             FROM map_runs r
+             WHERE EXISTS (
+                SELECT 1 FROM map_encounters e WHERE e.run_id = r.id AND e.category = ?1
+             )
+             ORDER BY started_at DESC LIMIT ?2 OFFSET ?3",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![category, limit, offset], |row| {
+            let level_ups_str: String = row.get(14)?;
+            let level_ups: Vec<u32> = serde_json::from_str(&level_ups_str).unwrap_or_default();
+            Ok(MapRun {
+                id: Some(row.get(0)?),
+                map_name: row.get(1)?,
+                area_id: row.get(2)?,
+                area_level: row.get(3)?,
+                area_type: row.get(4)?,
+                map_tier: row.get(5)?,
+                instance_id: row.get(6)?,
+                league: row.get(7)?,
+                session_id: row.get(8)?,
+                started_at: row.get(9)?,
+                ended_at: row.get(10)?,
+                duration_secs: row.get(11)?,
+                hideout_secs: row.get(12)?,
+                deaths: row.get(13)?,
+                level_ups,
+                encounters: Vec::new(),
+                loot_chaos: row.get(15)?,
+            })
+        })?;
+        let mut runs = Vec::new();
+        for row in rows {
+            runs.push(row?);
+        }
+        drop(stmt);
+        for run in &mut runs {
+            if let Some(id) = run.id {
+                run.encounters = Self::encounters_for(&conn, id)?;
+            }
+        }
+        Ok(runs)
+    }
+
     pub fn get_stats(&self) -> Result<MapStats> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -1149,6 +1204,41 @@ mod tests {
         assert_eq!(strand_stat.run_count, 2);
         assert!((strand_stat.avg_duration_secs - 150.0).abs() < 0.1);
         assert_eq!(strand_stat.total_deaths, 1);
+    }
+
+    #[test]
+    fn history_by_mechanic_filters() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        let enc = |cat: &str| MapEncounter {
+            category: cat.into(),
+            detail: None,
+            timestamp: "2025-05-20T14:00:20".into(),
+        };
+        db.insert_map_run(&MapRun {
+            map_name: "WithLegion".into(),
+            started_at: "2025-05-20T14:10:00".into(),
+            encounters: vec![enc("Legion"), enc("Delve")],
+            ..test_run()
+        })
+        .unwrap();
+        db.insert_map_run(&MapRun {
+            map_name: "WithDelveOnly".into(),
+            started_at: "2025-05-20T14:20:00".into(),
+            encounters: vec![enc("Delve")],
+            ..test_run()
+        })
+        .unwrap();
+
+        let legion = db.get_history_by_mechanic("Legion", 50, 0).unwrap();
+        assert_eq!(legion.len(), 1);
+        assert_eq!(legion[0].map_name, "WithLegion");
+        assert!(legion[0].encounters.iter().any(|e| e.category == "Legion"));
+
+        let delve = db.get_history_by_mechanic("Delve", 50, 0).unwrap();
+        assert_eq!(delve.len(), 2, "both runs have a Delve encounter");
+
+        assert!(db.get_history_by_mechanic("Ritual", 50, 0).unwrap().is_empty());
     }
 
     #[test]

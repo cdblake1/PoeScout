@@ -125,6 +125,16 @@ impl MapTracker {
         self.db.get_history(limit, offset)
     }
 
+    /// 6.8: history filtered to runs containing a given mechanic category.
+    pub fn get_history_by_mechanic(
+        &self,
+        category: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<MapRun>> {
+        self.db.get_history_by_mechanic(category, limit, offset)
+    }
+
     pub fn get_stats(&self) -> Result<MapStats> {
         self.db.get_stats()
     }
