@@ -682,7 +682,7 @@ const MapTimer: Component = () => {
           </Show>
         </div>
         <Show
-          when={history().length > 0}
+          when={history().length > 0 || state().kind === "InMap"}
           fallback={
             <div class="px-3 py-4 text-poe-muted text-sm text-center">
               No map runs recorded yet
@@ -701,6 +701,49 @@ const MapTimer: Component = () => {
                 </tr>
               </thead>
               <tbody>
+                {/* Live in-progress run (not yet a history row) */}
+                <Show when={state().kind === "InMap" && !mechanicFilter()}>
+                  <tr class="border-b border-poe-border/50 bg-poe-accent/5">
+                    <td class="px-3 py-1.5 text-poe-accent">
+                      <span class="inline-flex items-center gap-1.5">
+                        <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                        {state().map_name}
+                        <span class="text-[10px] text-poe-muted normal-case">· in progress</span>
+                      </span>
+                      <Show when={(state().encounters?.length ?? 0) > 0}>
+                        <div class="flex flex-wrap gap-1 mt-0.5">
+                          <For each={encounterCategories(state().encounters ?? [])}>
+                            {(c) => (
+                              <span
+                                class="text-[10px] px-1 rounded bg-poe-bg text-poe-muted border border-poe-border cursor-pointer hover:text-poe-accent"
+                                onClick={() => filterByMechanic(c)}
+                                title="Filter Recent Runs by this mechanic"
+                              >
+                                {c}
+                              </span>
+                            )}
+                          </For>
+                        </div>
+                      </Show>
+                    </td>
+                    <td class="px-3 py-1.5 text-right text-poe-muted">
+                      {state().map_tier != null
+                        ? `T${state().map_tier}`
+                        : state().area_level != null
+                          ? `T${Math.max(1, (state().area_level as number) - 67)}`
+                          : "-"}
+                    </td>
+                    <td class="px-3 py-1.5 text-right tabular-nums">{formatDuration(elapsed())}</td>
+                    <td
+                      class={`px-3 py-1.5 text-right ${
+                        (state().deaths ?? 0) > 0 ? "text-red-400" : "text-poe-muted"
+                      }`}
+                    >
+                      {state().deaths ?? 0}
+                    </td>
+                    <td class="px-3 py-1.5 text-right text-poe-muted">—</td>
+                  </tr>
+                </Show>
                 <For each={history()}>
                   {(run) => (
                     <tr class="border-b border-poe-border/50 hover:bg-poe-bg/50">

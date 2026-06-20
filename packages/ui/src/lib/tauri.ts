@@ -186,6 +186,7 @@ export interface TrackerState {
   map_tier?: number | null;
   started_at?: string;
   deaths?: number;
+  encounters?: MapEncounter[];
 }
 
 export interface MapEncounter {

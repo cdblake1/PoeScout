@@ -17,6 +17,9 @@ pub enum TrackerState {
         map_tier: Option<u32>,
         started_at: String,
         deaths: u32,
+        /// Mechanics detected so far in the in-progress run (for the live row).
+        #[serde(default)]
+        encounters: Vec<MapEncounter>,
     },
 }
 
@@ -353,6 +356,7 @@ impl StateMachine {
                 map_tier: run.map_tier,
                 started_at: fmt(run.started_at),
                 deaths: run.deaths,
+                encounters: run.encounters.clone(),
             },
         }
     }
@@ -607,6 +611,7 @@ impl StateMachine {
                 text,
                 timestamp,
             } => {
+                let mut added = false;
                 if let InnerState::InMap { ref mut run } = self.inner {
                     if let Some((def, specific)) = crate::encounters::match_encounter(&npc, &text) {
                         // Presence (by_npc) is recorded once per category; specific
@@ -622,8 +627,13 @@ impl StateMachine {
                                 detail: def.detail,
                                 timestamp: fmt(timestamp),
                             });
+                            added = true;
                         }
                     }
+                }
+                // Surface the new mechanic live (overlay / open-run row).
+                if added {
+                    events.push(StateEvent::StateChanged(self.state()));
                 }
             }
         }
