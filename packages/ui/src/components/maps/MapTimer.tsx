@@ -7,6 +7,7 @@ import {
   getMapStats,
   getMapSessions,
   getMapTypeStats,
+  getMechanicStats,
   getNetWorthHistory,
   getItemsPerHour,
   clearMapHistory,
@@ -15,6 +16,7 @@ import {
   type MapStats,
   type MapSession,
   type MapTypeStat,
+  type MechanicStat,
   type MapEncounter,
   type PortfolioSnapshot,
   type ItemRate,
@@ -86,6 +88,7 @@ const MapTimer: Component = () => {
   const [history, setHistory] = createSignal<MapRun[]>([]);
   const [sessions, setSessions] = createSignal<MapSession[]>([]);
   const [mapTypeStats, setMapTypeStats] = createSignal<MapTypeStat[]>([]);
+  const [mechanicStats, setMechanicStats] = createSignal<MechanicStat[]>([]);
   const [netWorth, setNetWorth] = createSignal<PortfolioSnapshot[]>([]);
   const [itemRates, setItemRates] = createSignal<ItemRate[]>([]);
   const [itemScope, setItemScope] = createSignal<ItemRateScope>({ kind: "current_session" });
@@ -121,11 +124,12 @@ const MapTimer: Component = () => {
 
   const refreshData = async () => {
     try {
-      const [h, st, ses, mts, nw, ir] = await Promise.all([
+      const [h, st, ses, mts, mech, nw, ir] = await Promise.all([
         getMapHistory(50, 0),
         getMapStats(),
         getMapSessions(20, 0),
         getMapTypeStats(),
+        getMechanicStats(),
         getNetWorthHistory(50),
         getItemsPerHour(itemScope()),
       ]);
@@ -133,6 +137,7 @@ const MapTimer: Component = () => {
       setStats(st);
       setSessions(ses);
       setMapTypeStats(mts);
+      setMechanicStats(mech);
       setNetWorth(nw);
       setItemRates(ir);
     } catch {}
@@ -439,6 +444,47 @@ const MapTimer: Component = () => {
                         {m.avg_loot_chaos != null ? formatChaos(m.avg_loot_chaos) : "—"}
                       </td>
                       <td class="px-3 py-1.5 text-right">{lootPerHour(m)}</td>
+                      <td class="px-3 py-1.5 text-right text-poe-muted">{m.total_deaths}</td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </Show>
+
+      {/* Per-mechanic stats (6.8) */}
+      <Show when={mechanicStats().length > 0}>
+        <div class="bg-poe-surface border border-poe-border rounded">
+          <div class="px-3 py-2 border-b border-poe-border text-poe-muted text-xs uppercase tracking-wide">
+            League Mechanics
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-poe-muted text-xs border-b border-poe-border">
+                  <th class="text-left px-3 py-1">Mechanic</th>
+                  <th class="text-right px-3 py-1">Maps</th>
+                  <th class="text-right px-3 py-1">% of Maps</th>
+                  <th class="text-right px-3 py-1">Encounters</th>
+                  <th class="text-right px-3 py-1">Avg Time</th>
+                  <th class="text-right px-3 py-1">Deaths</th>
+                </tr>
+              </thead>
+              <tbody>
+                <For each={mechanicStats()}>
+                  {(m) => (
+                    <tr class="border-b border-poe-border/50 hover:bg-poe-bg/50">
+                      <td class="px-3 py-1.5 text-poe-accent">{m.category}</td>
+                      <td class="px-3 py-1.5 text-right">{m.maps_with}</td>
+                      <td class="px-3 py-1.5 text-right tabular-nums">
+                        {m.pct_of_maps.toFixed(1)}%
+                      </td>
+                      <td class="px-3 py-1.5 text-right">{m.encounter_count}</td>
+                      <td class="px-3 py-1.5 text-right tabular-nums">
+                        {formatDuration(m.avg_duration_secs)}
+                      </td>
                       <td class="px-3 py-1.5 text-right text-poe-muted">{m.total_deaths}</td>
                     </tr>
                   )}

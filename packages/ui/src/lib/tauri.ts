@@ -239,6 +239,16 @@ export interface MapTypeStat {
   total_deaths: number;
 }
 
+export interface MechanicStat {
+  category: string;
+  encounter_count: number;
+  maps_with: number;
+  pct_of_maps: number;
+  avg_duration_secs: number;
+  avg_loot_chaos: number | null;
+  total_deaths: number;
+}
+
 export interface PortfolioSnapshot {
   id: number | null;
   timestamp: string;
@@ -283,6 +293,12 @@ export async function getMapStats(): Promise<MapStats> {
 
 export async function getMapTypeStats(): Promise<MapTypeStat[]> {
   return invoke("get_map_type_stats");
+}
+
+// Per-mechanic stats (6.8)
+
+export async function getMechanicStats(): Promise<MechanicStat[]> {
+  return invoke("get_mechanic_stats");
 }
 
 // Items per hour (6.7a)

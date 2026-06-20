@@ -112,6 +112,7 @@ pub fn run() {
             commands::maps::get_map_stats,
             commands::maps::get_map_sessions,
             commands::maps::get_map_type_stats,
+            commands::maps::get_mechanic_stats,
             commands::maps::get_items_per_hour,
             commands::maps::get_net_worth_history,
             commands::maps::get_session_detail,

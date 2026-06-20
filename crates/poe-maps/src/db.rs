@@ -1,6 +1,6 @@
 use crate::state::{
     ItemRate, ItemRateScope, LootItem, MapEncounter, MapRun, MapSession, MapStats, MapTypeStat,
-    PortfolioSnapshot, ResourceSnapshot,
+    MechanicStat, PortfolioSnapshot, ResourceSnapshot,
 };
 use anyhow::Result;
 use rusqlite::Connection;
@@ -297,6 +297,65 @@ impl MapDb {
                 avg_duration_secs: row.get(3)?,
                 avg_loot_chaos: row.get(4)?,
                 total_deaths: row.get(5)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /// Per-mechanic aggregates, grouped by encounter `category`. `pct_of_maps`
+    /// is computed against the total run count. The inner query collapses to one
+    /// row per (category, run) so per-run figures (duration/deaths/loot) aren't
+    /// inflated by mechanics that log multiple rows per map (e.g. captures).
+    pub fn get_mechanic_stats(&self) -> Result<Vec<MechanicStat>> {
+        let conn = self.conn.lock().unwrap();
+        let total_runs: f64 = conn.query_row("SELECT COUNT(*) FROM map_runs", [], |r| {
+            let n: i64 = r.get(0)?;
+            Ok(n as f64)
+        })?;
+        let mut stmt = conn.prepare(
+            "SELECT category,
+                    SUM(enc_count) AS encounter_count,
+                    COUNT(*) AS maps_with,
+                    COALESCE(AVG(duration_secs), 0) AS avg_duration,
+                    AVG(loot_chaos) AS avg_loot,
+                    COALESCE(SUM(deaths), 0) AS total_deaths
+             FROM (
+                SELECT e.category AS category,
+                       COUNT(*) AS enc_count,
+                       r.duration_secs AS duration_secs,
+                       r.loot_chaos AS loot_chaos,
+                       r.deaths AS deaths
+                FROM map_encounters e
+                JOIN map_runs r ON r.id = e.run_id
+                GROUP BY e.category, e.run_id
+             )
+             GROUP BY category
+             ORDER BY maps_with DESC, category ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let category: String = row.get(0)?;
+            let encounter_count: u32 = row.get(1)?;
+            let maps_with: u32 = row.get(2)?;
+            let avg_duration_secs: f64 = row.get(3)?;
+            let avg_loot_chaos: Option<f64> = row.get(4)?;
+            let total_deaths: u32 = row.get(5)?;
+            let pct_of_maps = if total_runs > 0.0 {
+                maps_with as f64 / total_runs * 100.0
+            } else {
+                0.0
+            };
+            Ok(MechanicStat {
+                category,
+                encounter_count,
+                maps_with,
+                pct_of_maps,
+                avg_duration_secs,
+                avg_loot_chaos,
+                total_deaths,
             })
         })?;
         let mut out = Vec::new();
@@ -1090,6 +1149,58 @@ mod tests {
         assert_eq!(strand_stat.run_count, 2);
         assert!((strand_stat.avg_duration_secs - 150.0).abs() < 0.1);
         assert_eq!(strand_stat.total_deaths, 1);
+    }
+
+    #[test]
+    fn mechanic_stats_aggregates() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        let enc = |cat: &str, detail: Option<&str>| MapEncounter {
+            category: cat.into(),
+            detail: detail.map(|d| d.into()),
+            timestamp: "2025-05-20T14:00:20".into(),
+        };
+        // Run A: Legion + two beast captures, 100s, 1 death.
+        db.insert_map_run(&MapRun {
+            duration_secs: 100.0,
+            deaths: 1,
+            encounters: vec![
+                enc("Legion", Some("domain")),
+                enc("Bestiary", Some("yellow")),
+                enc("Bestiary", Some("red")),
+            ],
+            ..test_run()
+        })
+        .unwrap();
+        // Run B: Legion only, 200s, 0 deaths.
+        db.insert_map_run(&MapRun {
+            duration_secs: 200.0,
+            deaths: 0,
+            encounters: vec![enc("Legion", Some("domain"))],
+            ..test_run()
+        })
+        .unwrap();
+        // Run C: no mechanics.
+        db.insert_map_run(&MapRun {
+            duration_secs: 50.0,
+            ..test_run()
+        })
+        .unwrap();
+
+        let stats = db.get_mechanic_stats().unwrap();
+        // Ordered by maps_with desc → Legion (2 maps) first.
+        let legion = &stats[0];
+        assert_eq!(legion.category, "Legion");
+        assert_eq!(legion.maps_with, 2);
+        assert_eq!(legion.encounter_count, 2);
+        assert!((legion.avg_duration_secs - 150.0).abs() < 0.1);
+        assert_eq!(legion.total_deaths, 1);
+        assert!((legion.pct_of_maps - 200.0 / 3.0).abs() < 0.1);
+
+        let bestiary = stats.iter().find(|m| m.category == "Bestiary").unwrap();
+        assert_eq!(bestiary.maps_with, 1);
+        assert_eq!(bestiary.encounter_count, 2, "both captures counted");
+        assert!((bestiary.avg_duration_secs - 100.0).abs() < 0.1);
     }
 
     #[test]

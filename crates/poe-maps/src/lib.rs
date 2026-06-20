@@ -11,7 +11,7 @@ use chrono::NaiveDateTime;
 use db::MapDb;
 use parser::LogEvent;
 use state::{
-    ItemRate, ItemRateScope, LootItem, MapRun, MapSession, MapStats, MapTypeStat,
+    ItemRate, ItemRateScope, LootItem, MapRun, MapSession, MapStats, MapTypeStat, MechanicStat,
     PortfolioSnapshot, ResourceSnapshot, StateEvent, StateMachine, TrackerState,
 };
 use std::path::{Path, PathBuf};
@@ -131,6 +131,11 @@ impl MapTracker {
 
     pub fn get_map_type_stats(&self) -> Result<Vec<MapTypeStat>> {
         self.db.get_map_type_stats()
+    }
+
+    /// 6.8: per-league-mechanic aggregates (count, % of maps, avg time, deaths).
+    pub fn get_mechanic_stats(&self) -> Result<Vec<MechanicStat>> {
+        self.db.get_mechanic_stats()
     }
 
     /// 6.7a: per-item-name rates over the chosen scope.

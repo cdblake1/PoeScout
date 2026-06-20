@@ -127,6 +127,22 @@ pub struct MapTypeStat {
     pub total_deaths: u32,
 }
 
+/// Aggregated stats for one league mechanic (grouped by encounter `category`
+/// across all runs). `encounter_count` counts raw encounter rows (so repeated
+/// detail events like beast captures add up); `maps_with` is the number of
+/// distinct maps that contained the mechanic.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MechanicStat {
+    pub category: String,
+    pub encounter_count: u32,
+    pub maps_with: u32,
+    /// `maps_with` as a percentage of all runs.
+    pub pct_of_maps: f64,
+    pub avg_duration_secs: f64,
+    pub avg_loot_chaos: Option<f64>,
+    pub total_deaths: u32,
+}
+
 /// A point-in-time stash valuation (recorded whenever a stash scan finalizes —
 /// manual or via the auto-session start/end snapshot). Feeds the net-worth chart.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

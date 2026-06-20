@@ -1,8 +1,8 @@
 use crate::commands::stash::StashTrackerState;
 use poe_maps::session::{next_session_action, SessionAction};
 use poe_maps::state::{
-    ItemRate, ItemRateScope, MapRun, MapSession, MapStats, MapTypeStat, PortfolioSnapshot,
-    StateEvent, TrackerState,
+    ItemRate, ItemRateScope, MapRun, MapSession, MapStats, MapTypeStat, MechanicStat,
+    PortfolioSnapshot, StateEvent, TrackerState,
 };
 use poe_maps::MapTracker;
 use serde::Serialize;
@@ -73,6 +73,17 @@ pub async fn get_map_type_stats(
     let guard = tracker_state.lock().await;
     match &*guard {
         Some(tracker) => tracker.get_map_type_stats().map_err(|e| e.to_string()),
+        None => Ok(vec![]),
+    }
+}
+
+#[tauri::command]
+pub async fn get_mechanic_stats(
+    tracker_state: State<'_, MapTrackerState>,
+) -> Result<Vec<MechanicStat>, String> {
+    let guard = tracker_state.lock().await;
+    match &*guard {
+        Some(tracker) => tracker.get_mechanic_stats().map_err(|e| e.to_string()),
         None => Ok(vec![]),
     }
 }
