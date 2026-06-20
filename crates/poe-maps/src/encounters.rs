@@ -69,6 +69,39 @@ mod tests {
     }
 
     #[test]
+    fn matches_heist_rogue_by_first_name() {
+        let (def, specific) =
+            match_encounter("Karst, the Lockpick", "I'll get that lock open.").unwrap();
+        assert_eq!(def.category, "Heist");
+        assert!(!specific);
+    }
+
+    #[test]
+    fn matches_sanctum_and_ancestor_npcs() {
+        let (sanctum, _) =
+            match_encounter("Lycia, Unholy Heretic", "None are innocent.").unwrap();
+        assert_eq!(sanctum.category, "Sanctum");
+        let (ancestor, _) = match_encounter("Navali", "The Trial continues!").unwrap();
+        assert_eq!(ancestor.category, "Ancestor");
+        let (ultimatum, _) =
+            match_encounter("The Trialmaster", "A battlefield chilled by winter's hate.").unwrap();
+        assert_eq!(ultimatum.category, "Ultimatum");
+    }
+
+    #[test]
+    fn red_beast_capture_quote_has_detail() {
+        let (def, specific) = match_encounter(
+            "Einhar, Beastmaster",
+            "Great job, Exile! Einhar will take the captured beast to the Menagerie.",
+        )
+        .unwrap();
+        assert_eq!(def.category, "Bestiary");
+        assert_eq!(def.kind.as_deref(), Some("capture"));
+        assert_eq!(def.detail.as_deref(), Some("red"));
+        assert!(specific);
+    }
+
+    #[test]
     fn no_match_for_player_chat() {
         assert!(match_encounter("RandomPlayer", "wtb 6l chest 50c").is_none());
     }

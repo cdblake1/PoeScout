@@ -88,6 +88,15 @@ on-screen OCR (6.6). Full per-mechanic catalog for 3.28 Mirage lives in
 that doc each league.
 
 ### Remaining
+- [x] **6.8** league mechanic tracking (TraXile-style) — per-map mechanic
+      detection from `Client.txt` via two mechanisms: NPC dialogue
+      (`data/encounters.json`, expanded to Heist/Sanctum/Ultimatum/Ancestor +
+      beast-capture counting) and **new** area-entry detection
+      (`areas::mechanic_for_area` → Legion/Simulacrum/Breachstone/Sanctum/Temple/
+      logbook/lab/boss arenas). Stats via `get_mechanic_stats`; history filter via
+      `get_map_history_by_mechanic`; **League Mechanics** table + clickable filter
+      in the Maps tab. Reuses `map_encounters` (no migration). Detection-signal
+      catalog + untrackables documented in `docs/poe-mechanics-resources.md`.
 - [ ] **6.6b** real OCR + calibration UI — blocked on the spike result. If
       `non_black_fraction ≥ ~0.5` → `Windows.Media.Ocr` digit reader +
       drag-a-box calibration UI + session-boundary reads writing to

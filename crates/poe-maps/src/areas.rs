@@ -157,7 +157,7 @@ static AREA_MECHANICS: &[(&str, &str, Option<&str>)] = &[
     ("Lunacy's Watch", "Simulacrum", None),
     ("The Bridge Enraptured", "Simulacrum", None),
     ("The Syndrome Encampment", "Simulacrum", None),
-    ("Hysteria's Cradle", "Simulacrum", None),
+    ("Hysteriagate", "Simulacrum", None),
     ("Oriath Delusion", "Simulacrum", None),
     // Breach — Breachstone Domains (one per Breachlord).
     ("Xoph's Domain", "Breach", Some("domain")),
@@ -165,6 +165,54 @@ static AREA_MECHANICS: &[(&str, &str, Option<&str>)] = &[
     ("Esh's Domain", "Breach", Some("domain")),
     ("Uul-Netol's Domain", "Breach", Some("domain")),
     ("Chayula's Domain", "Breach", Some("domain")),
+    // Sanctum — the Forbidden Sanctum floor areas.
+    ("The Forbidden Sanctum", "Sanctum", None),
+    ("Sanctum Archives", "Sanctum", None),
+    ("Sanctum Cathedral", "Sanctum", None),
+    ("Sanctum Necropolis", "Sanctum", None),
+    ("Sanctum Vaults", "Sanctum", None),
+    ("Sanctum Mausoleum", "Sanctum", None),
+    // Incursion — the final Temple of Atzoatl run.
+    ("The Temple of Atzoatl", "Temple", None),
+    // Harvest / Ancestor / Abyss / Ultimatum — dedicated areas.
+    ("The Sacred Grove", "Harvest", None),
+    ("The Halls of the Dead", "Ancestor", None),
+    ("Abyssal Depths", "Abyss", None),
+    ("The Tower of Ordeals", "Ultimatum", Some("trialmaster")),
+    // Expedition — Logbook areas (main expedition zones).
+    ("Battleground Graves", "Expedition", Some("logbook")),
+    ("Bluffs", "Expedition", Some("logbook")),
+    ("Desert Ruins", "Expedition", Some("logbook")),
+    ("Dried Riverbed", "Expedition", Some("logbook")),
+    ("Forest Ruins", "Expedition", Some("logbook")),
+    ("Karui Wargraves", "Expedition", Some("logbook")),
+    ("Mountainside", "Expedition", Some("logbook")),
+    ("Rotting Temple", "Expedition", Some("logbook")),
+    ("Sarn Slums", "Expedition", Some("logbook")),
+    ("Scrublands", "Expedition", Some("logbook")),
+    ("Shipwreck Reef", "Expedition", Some("logbook")),
+    ("Utzaal Outskirts", "Expedition", Some("logbook")),
+    ("Volcanic Island", "Expedition", Some("logbook")),
+    // Labyrinth — Trials of Ascendancy that appear inside maps.
+    ("Trial of Piercing Truth", "Lab", Some("trial")),
+    ("Trial of Swirling Fear", "Lab", Some("trial")),
+    ("Trial of Crippling Grief", "Lab", Some("trial")),
+    ("Trial of Burning Rage", "Lab", Some("trial")),
+    ("Trial of Lingering Pain", "Lab", Some("trial")),
+    ("Trial of Stinging Doubt", "Lab", Some("trial")),
+    // Pinnacle boss arenas (apostrophe forms as they appear in Client.txt).
+    ("Eye of the Storm", "Boss", Some("Sirus")),
+    ("The Shaper's Realm", "Boss", Some("Shaper")),
+    ("Absence of Value and Meaning", "Boss", Some("Elder")),
+    ("Absence of Mercy and Empathy", "Boss", Some("Maven")),
+    ("The Maven's Crucible", "Boss", Some("Maven")),
+    ("Absence of Patience and Wisdom", "Boss", Some("Searing Exarch")),
+    ("Absence of Symmetry and Harmony", "Boss", Some("Eater of Worlds")),
+    ("Polaric Void", "Boss", Some("Black Star")),
+    ("Seething Chyme", "Boss", Some("Infinite Hunger")),
+    ("The Apex of Sacrifice", "Boss", Some("Atziri")),
+    ("The Alluring Abyss", "Boss", Some("Uber Atziri")),
+    ("Mastermind's Lair", "Boss", Some("Catarina")),
 ];
 
 /// Detect a league mechanic from the area being entered, for mechanics that put
@@ -256,6 +304,35 @@ mod tests {
         assert_eq!(
             mechanic_for_area(None, "Xoph's Domain"),
             Some(("Breach".to_string(), Some("domain".to_string())))
+        );
+    }
+
+    #[test]
+    fn mechanic_for_expanded_areas() {
+        assert_eq!(
+            mechanic_for_area(None, "Sanctum Cathedral"),
+            Some(("Sanctum".to_string(), None))
+        );
+        assert_eq!(
+            mechanic_for_area(None, "The Temple of Atzoatl"),
+            Some(("Temple".to_string(), None))
+        );
+        assert_eq!(
+            mechanic_for_area(None, "Eye of the Storm"),
+            Some(("Boss".to_string(), Some("Sirus".to_string())))
+        );
+        assert_eq!(
+            mechanic_for_area(None, "Volcanic Island"),
+            Some(("Expedition".to_string(), Some("logbook".to_string())))
+        );
+        assert_eq!(
+            mechanic_for_area(None, "Trial of Burning Rage"),
+            Some(("Lab".to_string(), Some("trial".to_string())))
+        );
+        // Corrected from the slice-1 guess: the 4th Simulacrum area is "Hysteriagate".
+        assert_eq!(
+            mechanic_for_area(None, "Hysteriagate"),
+            Some(("Simulacrum".to_string(), None))
         );
     }
 
