@@ -6,6 +6,8 @@ import {
   saveSettings,
   setTrackedCharacter,
   capturePoeTest,
+  ocrRegion,
+  recordResourceOcr,
   type CaptureTestResult,
 } from "../../lib/tauri";
 
@@ -24,6 +26,45 @@ const SettingsPanel: Component = () => {
   const [captureRunning, setCaptureRunning] = createSignal(false);
   const [captureResult, setCaptureResult] = createSignal<CaptureTestResult | null>(null);
   const [captureError, setCaptureError] = createSignal("");
+
+  // OCR resource calibration (6.6b)
+  const [ocrSource, setOcrSource] = createSignal("kingsmarch_gold");
+  const [ocrX, setOcrX] = createSignal(0);
+  const [ocrY, setOcrY] = createSignal(0);
+  const [ocrW, setOcrW] = createSignal(160);
+  const [ocrH, setOcrH] = createSignal(40);
+  const [ocrBusy, setOcrBusy] = createSignal(false);
+  const [ocrText, setOcrText] = createSignal<string | null>(null);
+  const [ocrValue, setOcrValue] = createSignal<number | null>(null);
+  const [ocrError, setOcrError] = createSignal("");
+
+  const rect = () => [ocrX(), ocrY(), ocrW(), ocrH()] as const;
+
+  const testOcr = async () => {
+    setOcrBusy(true);
+    setOcrError("");
+    setOcrText(null);
+    try {
+      setOcrText(await ocrRegion(...rect()));
+    } catch (e) {
+      setOcrError(String(e));
+    } finally {
+      setOcrBusy(false);
+    }
+  };
+
+  const readOcr = async () => {
+    setOcrBusy(true);
+    setOcrError("");
+    setOcrValue(null);
+    try {
+      setOcrValue(await recordResourceOcr(ocrSource().trim() || "resource", ...rect()));
+    } catch (e) {
+      setOcrError(String(e));
+    } finally {
+      setOcrBusy(false);
+    }
+  };
 
   const runCaptureTest = async () => {
     setCaptureRunning(true);
@@ -249,6 +290,72 @@ const SettingsPanel: Component = () => {
             </Show>
             <Show when={captureError()}>
               <span class="text-red-400 text-sm">{captureError()}</span>
+            </Show>
+          </div>
+        </div>
+
+        <div class="bg-poe-surface border border-poe-border rounded p-4 flex flex-col gap-2">
+          <label class="text-poe-muted text-sm font-bold">
+            Experimental — OCR resource reader (6.6b)
+          </label>
+          <p class="text-poe-muted text-xs">
+            Reads a number off the screen (e.g. Kingsmarch gold, Sulphite, Hiveblood) from a
+            calibrated rectangle of the PoE client area, in pixels from its top-left. Open PoE,
+            enter X/Y/Width/Height over the number, and <strong>Test</strong> until the text reads
+            cleanly; then <strong>Read &amp; store</strong> saves it as an <code>ocr:&lt;key&gt;</code>
+            time-series. Best-effort and resolution-specific — verify the value.
+          </p>
+          <div class="flex items-center gap-2 flex-wrap text-sm">
+            <input
+              class="px-2 py-1 bg-poe-bg border border-poe-border rounded text-poe-text w-40"
+              placeholder="resource key"
+              value={ocrSource()}
+              onInput={(e) => setOcrSource(e.currentTarget.value)}
+            />
+            {(
+              [
+                ["X", ocrX, setOcrX],
+                ["Y", ocrY, setOcrY],
+                ["W", ocrW, setOcrW],
+                ["H", ocrH, setOcrH],
+              ] as const
+            ).map(([label, get, set]) => (
+              <label class="flex items-center gap-1 text-poe-muted">
+                {label}
+                <input
+                  type="number"
+                  class="px-2 py-1 bg-poe-bg border border-poe-border rounded text-poe-text w-20"
+                  value={get()}
+                  onInput={(e) => set(parseInt(e.currentTarget.value) || 0)}
+                />
+              </label>
+            ))}
+          </div>
+          <div class="flex items-center gap-3 flex-wrap">
+            <button
+              class="px-4 py-2 bg-poe-bg border border-poe-border rounded text-poe-text text-sm hover:border-poe-accent disabled:opacity-50"
+              onClick={testOcr}
+              disabled={ocrBusy()}
+            >
+              {ocrBusy() ? "Working..." : "Test"}
+            </button>
+            <button
+              class="px-4 py-2 bg-poe-bg border border-poe-border rounded text-poe-text text-sm hover:border-poe-accent disabled:opacity-50"
+              onClick={readOcr}
+              disabled={ocrBusy()}
+            >
+              Read &amp; store
+            </button>
+            <Show when={ocrText() !== null}>
+              <span class="text-poe-muted text-sm">
+                read: <span class="text-poe-text">"{ocrText()}"</span>
+              </span>
+            </Show>
+            <Show when={ocrValue() !== null}>
+              <span class="text-green-400 text-sm">stored {ocrSource()} = {ocrValue()}</span>
+            </Show>
+            <Show when={ocrError()}>
+              <span class="text-red-400 text-sm">{ocrError()}</span>
             </Show>
           </div>
         </div>

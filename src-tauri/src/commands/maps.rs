@@ -2,7 +2,7 @@ use crate::commands::stash::StashTrackerState;
 use poe_maps::session::{next_session_action, SessionAction};
 use poe_maps::state::{
     ItemRate, ItemRateScope, MapRun, MapSession, MapStats, MapTypeStat, MechanicStat,
-    PortfolioSnapshot, StateEvent, TrackerState,
+    PortfolioSnapshot, ResourceSnapshot, StateEvent, TrackerState,
 };
 use poe_maps::MapTracker;
 use serde::Serialize;
@@ -91,6 +91,47 @@ pub async fn get_map_history_by_mechanic(
             .map_err(|e| e.to_string()),
         None => Ok(vec![]),
     }
+}
+
+/// OCR resource time-series (6.6b) — read by the Maps OCR panel.
+#[tauri::command]
+pub async fn get_resource_snapshots(
+    source: String,
+    limit: u32,
+    tracker_state: State<'_, MapTrackerState>,
+) -> Result<Vec<ResourceSnapshot>, String> {
+    let guard = tracker_state.lock().await;
+    match &*guard {
+        Some(tracker) => tracker
+            .get_resource_snapshots(&source, limit)
+            .map_err(|e| e.to_string()),
+        None => Ok(vec![]),
+    }
+}
+
+/// OCR a calibrated screen region for a numeric resource, store it as an
+/// `ocr:<source>` snapshot, and return the read value. The capture+OCR is
+/// blocking (GDI + Windows.Media.Ocr), so it runs on a blocking thread.
+#[tauri::command]
+pub async fn record_resource_ocr(
+    source: String,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    tracker_state: State<'_, MapTrackerState>,
+) -> Result<i64, String> {
+    let value =
+        tokio::task::spawn_blocking(move || crate::commands::capture::ocr_region_int(x, y, width, height))
+            .await
+            .map_err(|e| e.to_string())??;
+    let guard = tracker_state.lock().await;
+    if let Some(tracker) = &*guard {
+        tracker
+            .record_resource_snapshot(&format!("ocr:{source}"), value)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(value)
 }
 
 #[tauri::command]

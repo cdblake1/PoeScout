@@ -302,6 +302,43 @@ export async function getMechanicStats(): Promise<MechanicStat[]> {
   return invoke("get_mechanic_stats");
 }
 
+// OCR resources (6.6b)
+
+export interface ResourceSnapshot {
+  id: number | null;
+  source: string;
+  value: number;
+  timestamp: string;
+}
+
+/** OCR a calibrated client-area rectangle; returns the raw recognized text. */
+export async function ocrRegion(
+  x: number,
+  y: number,
+  width: number,
+  height: number
+): Promise<string> {
+  return invoke("ocr_region", { x, y, width, height });
+}
+
+/** OCR a region for a numeric resource, store it as `ocr:<source>`, return the value. */
+export async function recordResourceOcr(
+  source: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number
+): Promise<number> {
+  return invoke("record_resource_ocr", { source, x, y, width, height });
+}
+
+export async function getResourceSnapshots(
+  source: string,
+  limit: number
+): Promise<ResourceSnapshot[]> {
+  return invoke("get_resource_snapshots", { source, limit });
+}
+
 export async function getMapHistoryByMechanic(
   category: string,
   limit: number,
