@@ -1,4 +1,4 @@
-use crate::areas::{classify, map_tier, AreaType};
+use crate::areas::{classify, map_tier, mechanic_for_area, AreaType};
 use crate::parser::LogEvent;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
@@ -428,6 +428,10 @@ impl StateMachine {
                 let area_level = self.pending_level.take();
                 let atype = classify(area_id.as_deref(), &area_name);
                 let endpoint = self.current_instance.clone();
+                // Area-based mechanic (Legion Domain, Simulacrum, Breachstone, …):
+                // computed before area_name/area_id are moved into the run below;
+                // recorded on the resulting run once the lifecycle settles.
+                let mechanic = mechanic_for_area(area_id.as_deref(), &area_name);
 
                 if is_idle_type(atype) {
                     // Entering town/hideout/hub: suspend the run (do NOT complete it yet).
@@ -517,6 +521,23 @@ impl StateMachine {
                                 // Sub-area (Vaal side area, lab trial, abyssal depths, …):
                                 // stay in the current run.
                                 self.inner = InnerState::InMap { run };
+                            }
+                        }
+                    }
+                    // Record an area-based mechanic on the now-current run (the parent
+                    // map for sub-areas). Deduped per (category, detail) like NPC presence.
+                    if let Some((category, detail)) = mechanic {
+                        if let InnerState::InMap { ref mut run } = self.inner {
+                            let dup = run
+                                .encounters
+                                .iter()
+                                .any(|e| e.category == category && e.detail == detail);
+                            if !dup {
+                                run.encounters.push(MapEncounter {
+                                    category,
+                                    detail,
+                                    timestamp: fmt(timestamp),
+                                });
                             }
                         }
                     }
@@ -819,6 +840,64 @@ mod tests {
             .encounters
             .iter()
             .any(|e| e.category == "Bestiary" && e.detail.as_deref() == Some("yellow")));
+    }
+
+    #[test]
+    fn legion_domain_tags_parent_run() {
+        let mut sm = StateMachine::new(ts(0));
+        enter_map(&mut sm, 10, "Strand", 83);
+        // Enter the Legion Domain from inside the map (no level hint → sub-area).
+        sm.process(LogEvent::AreaChange {
+            timestamp: ts(60),
+            area_name: "Domain of Timeless Conflict".into(),
+        });
+        let run = sm.finalize_current(ts(180)).unwrap();
+        assert_eq!(run.map_name, "Strand", "stays the parent map");
+        assert!(run
+            .encounters
+            .iter()
+            .any(|e| e.category == "Legion" && e.detail.as_deref() == Some("domain")));
+    }
+
+    #[test]
+    fn simulacrum_from_hideout_is_tagged_run() {
+        let mut sm = StateMachine::new(ts(0));
+        // Open a Simulacrum from the hideout device → its own run, tagged.
+        sm.process(LogEvent::AreaChange {
+            timestamp: ts(10),
+            area_name: "Oriath Delusion".into(),
+        });
+        assert!(matches!(sm.state(), TrackerState::InMap { .. }));
+        let run = sm.finalize_current(ts(400)).unwrap();
+        assert!(run.encounters.iter().any(|e| e.category == "Simulacrum"));
+    }
+
+    #[test]
+    fn plain_map_records_no_area_mechanic() {
+        let mut sm = StateMachine::new(ts(0));
+        enter_map(&mut sm, 10, "Strand", 83);
+        let run = sm.finalize_current(ts(130)).unwrap();
+        assert!(run.encounters.is_empty(), "no spurious mechanic on a plain map");
+    }
+
+    #[test]
+    fn domain_reentry_deduped() {
+        let mut sm = StateMachine::new(ts(0));
+        enter_map(&mut sm, 10, "Strand", 83);
+        for t in [60, 90] {
+            sm.process(LogEvent::AreaChange {
+                timestamp: ts(t),
+                area_name: "Domain of Timeless Conflict".into(),
+            });
+            // Bounce back to the map between Domain entries (same instance → resume).
+            sm.process(LogEvent::AreaChange {
+                timestamp: ts(t + 5),
+                area_name: "Strand".into(),
+            });
+        }
+        let run = sm.finalize_current(ts(200)).unwrap();
+        let legion = run.encounters.iter().filter(|e| e.category == "Legion").count();
+        assert_eq!(legion, 1, "re-entering the Domain must not double-count");
     }
 
     #[test]

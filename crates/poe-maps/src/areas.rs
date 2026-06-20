@@ -143,6 +143,44 @@ pub fn is_idle_zone(area_id: Option<&str>, area_name: &str) -> bool {
     )
 }
 
+/// Special areas whose *entry* signals a league mechanic that emits no NPC line.
+/// Each entry maps an exact area display name to `(category, detail)`. Entering
+/// one records a `MapEncounter` on the current run (the parent map for sub-areas).
+///
+/// This is the area-based counterpart to the NPC-dialogue table in
+/// `data/encounters.json`. Names are sourced from the detection catalog in
+/// `docs/poe-mechanics-resources.md`; keep the two in sync each league.
+static AREA_MECHANICS: &[(&str, &str, Option<&str>)] = &[
+    // Legion — Timeless Conflict (5-splinter merged Domain entered from a map).
+    ("Domain of Timeless Conflict", "Legion", Some("domain")),
+    // Simulacrum — the wave areas (entered via Simulacrum/Splinters at the device).
+    ("Lunacy's Watch", "Simulacrum", None),
+    ("The Bridge Enraptured", "Simulacrum", None),
+    ("The Syndrome Encampment", "Simulacrum", None),
+    ("Hysteria's Cradle", "Simulacrum", None),
+    ("Oriath Delusion", "Simulacrum", None),
+    // Breach — Breachstone Domains (one per Breachlord).
+    ("Xoph's Domain", "Breach", Some("domain")),
+    ("Tul's Domain", "Breach", Some("domain")),
+    ("Esh's Domain", "Breach", Some("domain")),
+    ("Uul-Netol's Domain", "Breach", Some("domain")),
+    ("Chayula's Domain", "Breach", Some("domain")),
+];
+
+/// Detect a league mechanic from the area being entered, for mechanics that put
+/// you in a dedicated area instead of printing an NPC line (Legion Domains,
+/// Simulacrum, Breachstone Domains, …). Returns `(category, detail)`.
+///
+/// In-map Breach/Legion monoliths, Ritual, Metamorph, and Abyss cracks emit no
+/// log signal at all and are intentionally absent — see the limitations section
+/// of `docs/poe-mechanics-resources.md`.
+pub fn mechanic_for_area(_area_id: Option<&str>, area_name: &str) -> Option<(String, Option<String>)> {
+    AREA_MECHANICS
+        .iter()
+        .find(|(name, _, _)| *name == area_name)
+        .map(|(_, category, detail)| (category.to_string(), detail.map(|d| d.to_string())))
+}
+
 /// Map tier from the area level: T1 = level 68 … T16 = 83, T17 = 84.
 /// Returns `None` for sub-68 (campaign / non-map) levels.
 pub fn map_tier(area_level: u32) -> Option<u32> {
@@ -203,6 +241,28 @@ mod tests {
         );
         // A map by id is not an idle zone.
         assert!(!is_idle_zone(Some("MapWorldsStrand"), "Strand"));
+    }
+
+    #[test]
+    fn mechanic_for_special_areas() {
+        assert_eq!(
+            mechanic_for_area(None, "Domain of Timeless Conflict"),
+            Some(("Legion".to_string(), Some("domain".to_string())))
+        );
+        assert_eq!(
+            mechanic_for_area(None, "Oriath Delusion"),
+            Some(("Simulacrum".to_string(), None))
+        );
+        assert_eq!(
+            mechanic_for_area(None, "Xoph's Domain"),
+            Some(("Breach".to_string(), Some("domain".to_string())))
+        );
+    }
+
+    #[test]
+    fn mechanic_for_plain_map_is_none() {
+        assert_eq!(mechanic_for_area(Some("MapWorldsStrand"), "Strand"), None);
+        assert_eq!(mechanic_for_area(None, "Hideout"), None);
     }
 
     #[test]
