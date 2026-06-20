@@ -132,14 +132,29 @@ pub fn parse_line(line: &str) -> Option<LogEvent> {
     }
 
     if let Some(caps) = RE_NPC.captures(line) {
-        return Some(LogEvent::NpcLine {
-            timestamp: ts,
-            npc: caps[1].to_string(),
-            text: caps[2].to_string(),
-        });
+        let npc = caps[1].to_string();
+        // Player chat (global #, trade $, local %, guild &, whisper @From/@To, and
+        // guild-tag `<GUILD>` forms) matches the same `Name: text` shape as NPC
+        // dialogue. Reject it so a player named after a league NPC can't trigger a
+        // false mechanic. Real NPC names never start with a chat sigil.
+        if !is_player_chat(&npc) {
+            return Some(LogEvent::NpcLine {
+                timestamp: ts,
+                npc,
+                text: caps[2].to_string(),
+            });
+        }
     }
 
     None
+}
+
+/// True if a captured `Name:` belongs to a player chat channel rather than an NPC.
+fn is_player_chat(name: &str) -> bool {
+    matches!(
+        name.trim_start().chars().next(),
+        Some('#' | '$' | '%' | '&' | '@' | '<')
+    )
 }
 
 fn parse_timestamp(line: &str) -> Option<NaiveDateTime> {
@@ -258,6 +273,33 @@ mod tests {
             }
             _ => panic!("expected NpcLine"),
         }
+    }
+
+    #[test]
+    fn player_chat_is_not_npc_line() {
+        // Global/trade/local/guild/whisper chat must never be read as NPC dialogue,
+        // else a player named after a league NPC would trigger a false mechanic.
+        let lines = [
+            "2026/06/20 01:00:00 1 a [INFO Client 64912] #Alva: anyone want incursion carry",
+            "2026/06/20 01:00:00 1 a [INFO Client 64912] $Zana: wts maps",
+            "2026/06/20 01:00:00 1 a [INFO Client 64912] %Einhar: local chat",
+            "2026/06/20 01:00:00 1 a [INFO Client 64912] &Niko: guild chat",
+            "2026/06/20 01:00:00 1 a [INFO Client 64912] @From Oshabi: Hi, I'd like to buy",
+            "2026/06/20 01:00:00 1 a [INFO Client 64912] @To SomePlayer: ty",
+            "2026/06/20 01:00:00 1 a [INFO Client 64912] #<GUILD> Sirus: hi",
+        ];
+        for l in lines {
+            assert!(
+                !matches!(parse_line(l), Some(LogEvent::NpcLine { .. })),
+                "chat line wrongly parsed as NpcLine: {l}"
+            );
+        }
+    }
+
+    #[test]
+    fn real_npc_line_still_parses_after_chat_filter() {
+        let line = "2026/06/20 01:00:00 1 a [INFO Client 64912] Oshabi: This way, Exile.";
+        assert!(matches!(parse_line(line), Some(LogEvent::NpcLine { .. })));
     }
 
     #[test]

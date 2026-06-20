@@ -102,6 +102,14 @@ mod tests {
     }
 
     #[test]
+    fn maven_witness_dialogue_no_longer_tags() {
+        // The Maven / The Envoy narrate map bosses during normal atlas play; their
+        // presence must NOT be tagged as a mechanic (genuine Maven = boss arena).
+        assert!(match_encounter("The Maven", "Violence...").is_none());
+        assert!(match_encounter("The Envoy", "I followed her though I did not want to.").is_none());
+    }
+
+    #[test]
     fn no_match_for_player_chat() {
         assert!(match_encounter("RandomPlayer", "wtb 6l chest 50c").is_none());
     }

@@ -471,11 +471,19 @@ const MapTimer: Component = () => {
       </Show>
 
       {/* Per-mechanic stats (6.8) */}
-      <Show when={mechanicStats().length > 0}>
+      <Show when={history().length > 0 || mechanicStats().length > 0}>
         <div class="bg-poe-surface border border-poe-border rounded">
           <div class="px-3 py-2 border-b border-poe-border text-poe-muted text-xs uppercase tracking-wide">
             League Mechanics
           </div>
+          <Show
+            when={mechanicStats().length > 0}
+            fallback={
+              <div class="px-3 py-3 text-poe-muted text-sm">
+                No mechanics detected yet in recorded runs.
+              </div>
+            }
+          >
           <div class="max-h-64 overflow-y-auto">
             <table class="w-full text-sm">
               <thead>
@@ -513,6 +521,13 @@ const MapTimer: Component = () => {
                 </For>
               </tbody>
             </table>
+          </div>
+          </Show>
+          <div class="px-3 py-2 border-t border-poe-border text-poe-muted text-[11px] leading-snug">
+            Detected from the game log (NPC dialogue + special areas). Some mechanics leave
+            <span class="text-poe-text"> no log trace</span> and can't be detected this way:
+            in-map Breach, Legion monoliths, Ritual, Metamorph, Abyss, Eldritch (Exarch/Eater)
+            influence, and often Harvest. A blank here doesn't mean the map was empty.
           </div>
         </div>
       </Show>

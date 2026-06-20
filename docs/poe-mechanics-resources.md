@@ -134,12 +134,47 @@ The mechanic happens entirely client-side; nothing reaches the log. We cannot kn
 | **Abyss cracks** (in-map) | only the `Abyssal Depths` pit is detectable, not the crack |
 
 ### Candidates not yet shipped (documented, pending live-log verification)
-- **Vaal corrupted side areas** (~55, e.g. `Side Chapel`, `Hidden Patch`) → could tag `Vaal`; held back
-  because the generic names risk colliding with other areas — verify against a live log first.
 - **Ultimatum / Sanctum / Ancestor outcome quotes** (win/loss/took-reward, boss-kill lines) — large
   `by_quote` tables exist in TraXile but several lines are unverified against a real client; presence is
   already covered by `by_npc`, so outcome detail is deferred.
-- **Conqueror / Affliction / Settlers boss arenas** — present in one source only; verify before adding.
+- **Loot-inferred presence** — infer a mechanic from its resulting tradeable items via the per-map
+  inventory diff (Legion splinters→Legion, Crystallised Lifeforce→Harvest, Breach splinters→Breach,
+  catalysts→Metamorph, Mirage coins→Mirage). The cheapest way to cover the log blind spots; reuses
+  `poe-stash::diff_inventory`. Not built yet.
+
+## Detection limits & ToS (2026-06 research)
+
+**Hard ceiling — these emit NOTHING to `Client.txt`, so log parsing cannot see them** (confirmed: even
+TraXile, the most comprehensive log-only tracker, misses them): in-map **Breach**, **Legion** monoliths,
+**Ritual**, **Metamorph**, **Abyss** cracks, and **Eldritch (Searing Exarch / Eater of Worlds)
+influence + per-altar choices**. Their *dedicated areas* (Breachstone Domains, Domain of Timeless
+Conflict, Tane's Laboratory, Abyssal Depths) and *resulting items* (via inventory diff) are the only
+compliant signals.
+
+**Unreliable NPC dialogue** (present-but-silent): **Harvest** (*"If Oshabi is silent during a harvest,
+Harvest unfortunately cannot be tracked"* — Mapwatch), **Metamorph** (*"Tane is usually quiet"*),
+**Legion** (only when a General speaks). Treat absence as "unknown," not "didn't happen."
+
+**Maven ≠ "Maven mechanic":** The Maven / The Envoy narrate map bosses they *witness* during normal
+atlas play, so their dialogue is NOT a special-content signal — they were removed from `by_npc`
+presence. Genuine Maven content is detected via the boss arenas in `areas.rs`.
+
+**Player chat is filtered:** lines beginning with a chat sigil (`#` global, `$` trade, `%` local,
+`&` guild, `@` whisper, `<GUILD>` tag) are rejected by the parser before mechanic matching, so a player
+named after an NPC can't trigger a false mechanic.
+
+**ToS guardrails (verified on GGG pages — keep this app on the safe side):**
+- **Allowed:** apps that "run completely separate from the game"; reading `Client.txt`; the official
+  OAuth 2.1 API (`api.pathofexile.com`); manual single-action macros.
+- **Prohibited (ToU §7 → "immediate account termination"):** reading/modifying the game client or its
+  memory (§7b); bots/automation (§7c); non-official client connections (§7e); scraping (§7f);
+  reverse-engineering / deriving "communication protocols… through any means" = packet capture (§7i).
+- GGG (Sian_GGG): refrain from anything that "interacts with the game client… or provide[s] information
+  that isn't normally visible," and GGG "can't guarantee if a tool is allowed."
+- **Gray area:** automated stash/inventory polling is tolerated (Exile Diary does it) but technically
+  against the "manual invocation" wording → honor `X-Rate-Limit-*` headers and back off on 429.
+- Sources: ToU `/legal/terms-of-use-and-privacy-policy`; dev docs `/developer/docs`; forum 3584808,
+  3474232, 2116279.
 
 ## Bottom line for the tracker
 1. **Currency/profit** comes from Tier-2 item diffs (stash snapshot or character-inventory diff) priced
