@@ -296,6 +296,36 @@ fn is_idle_type(t: AreaType) -> bool {
     matches!(t, AreaType::Town | AreaType::Hideout | AreaType::Hub)
 }
 
+/// Count/outcome events (beast captures, Ultimatum rounds, boss kills) record
+/// every occurrence; everything else is presence (deduped per category/detail).
+fn is_count_kind(def: &crate::encounters::EncounterDef) -> bool {
+    matches!(def.kind.as_deref(), Some("capture" | "count" | "outcome"))
+}
+
+/// Push an encounter onto a run, deduping presence per (category, detail) unless
+/// `always`. Returns whether a row was added.
+fn push_encounter(
+    run: &mut RunAcc,
+    def: crate::encounters::EncounterDef,
+    always: bool,
+    ts: NaiveDateTime,
+) -> bool {
+    let dup = !always
+        && run
+            .encounters
+            .iter()
+            .any(|e| e.category == def.category && e.detail == def.detail);
+    if dup {
+        return false;
+    }
+    run.encounters.push(MapEncounter {
+        category: def.category,
+        detail: def.detail,
+        timestamp: fmt(ts),
+    });
+    true
+}
+
 /// Is this the same map instance (resume) or a different one (new run)?
 ///
 /// Identity is the **seed**: distinct instances have distinct seeds. The
@@ -613,25 +643,31 @@ impl StateMachine {
             } => {
                 let mut added = false;
                 if let InnerState::InMap { ref mut run } = self.inner {
+                    // Structured NPC dispatch: by_quote (exact, always) / by_npc (presence).
                     if let Some((def, specific)) = crate::encounters::match_encounter(&npc, &text) {
-                        // Presence (by_npc) is recorded once per category; specific
-                        // (by_quote) events are always recorded.
-                        let dup = !specific
-                            && run
-                                .encounters
-                                .iter()
-                                .any(|e| e.category == def.category && e.detail == def.detail);
-                        if !dup {
-                            run.encounters.push(MapEncounter {
-                                category: def.category,
-                                detail: def.detail,
-                                timestamp: fmt(timestamp),
-                            });
-                            added = true;
-                        }
+                        added |= push_encounter(run, def, specific, timestamp);
+                    }
+                    // Whole-line substring signals can also live inside NPC dialogue
+                    // (e.g. "So be it. Keep your precious sanity" → Simulacrum clear).
+                    for def in crate::encounters::match_line(&text) {
+                        let always = is_count_kind(&def);
+                        added |= push_encounter(run, def, always, timestamp);
                     }
                 }
-                // Surface the new mechanic live (overlay / open-run row).
+                if added {
+                    events.push(StateEvent::StateChanged(self.state()));
+                }
+            }
+            LogEvent::SystemLine { text, timestamp } => {
+                // System / tagged lines (Mirage, Nameless Seer, Reflecting Mist, …)
+                // matched by substring against `by_line`.
+                let mut added = false;
+                if let InnerState::InMap { ref mut run } = self.inner {
+                    for def in crate::encounters::match_line(&text) {
+                        let always = is_count_kind(&def);
+                        added |= push_encounter(run, def, always, timestamp);
+                    }
+                }
                 if added {
                     events.push(StateEvent::StateChanged(self.state()));
                 }
@@ -964,6 +1000,54 @@ mod tests {
         let run = sm.finalize_current(ts(200)).unwrap();
         let legion = run.encounters.iter().filter(|e| e.category == "Legion").count();
         assert_eq!(legion, 1, "re-entering the Domain must not double-count");
+    }
+
+    #[test]
+    fn system_line_tags_mirage_and_seer() {
+        let mut sm = StateMachine::new(ts(0));
+        enter_map(&mut sm, 10, "Strand", 83);
+        sm.process(LogEvent::SystemLine {
+            timestamp: ts(20),
+            text: "[Faridun] Blocking terrain outside mirage area".into(),
+        });
+        sm.process(LogEvent::SystemLine {
+            timestamp: ts(25),
+            text: ": The Nameless Seer has appeared nearby.".into(),
+        });
+        let run = sm.finalize_current(ts(130)).unwrap();
+        assert!(run.encounters.iter().any(|e| e.category == "Mirage"));
+        assert!(run
+            .encounters
+            .iter()
+            .any(|e| e.category == "Delirium" && e.detail.as_deref() == Some("nameless_seer")));
+    }
+
+    #[test]
+    fn substring_in_npc_dialogue_tags_simulacrum_clear() {
+        let mut sm = StateMachine::new(ts(0));
+        enter_map(&mut sm, 10, "Strand", 83);
+        sm.process(LogEvent::NpcLine {
+            timestamp: ts(40),
+            npc: "Strange Voice".into(),
+            text: "So be it. Keep your precious sanity, my agent of chaos.".into(),
+        });
+        let run = sm.finalize_current(ts(130)).unwrap();
+        assert!(run.encounters.iter().any(|e| e.category == "Delirium")); // Strange Voice presence
+        assert!(run.encounters.iter().any(|e| e.category == "Simulacrum")); // by_line fullclear
+    }
+
+    #[test]
+    fn mirage_presence_deduped() {
+        let mut sm = StateMachine::new(ts(0));
+        enter_map(&mut sm, 10, "Strand", 83);
+        for t in [20, 30, 40] {
+            sm.process(LogEvent::SystemLine {
+                timestamp: ts(t),
+                text: "[Faridun] Blocking terrain outside mirage area".into(),
+            });
+        }
+        let run = sm.finalize_current(ts(130)).unwrap();
+        assert_eq!(run.encounters.iter().filter(|e| e.category == "Mirage").count(), 1);
     }
 
     #[test]

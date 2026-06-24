@@ -50,6 +50,14 @@ pub enum LogEvent {
         npc: String,
         text: String,
     },
+    /// A system / tagged line that isn't a structured event but may carry a
+    /// league-mechanic signal (e.g. `] : The Nameless Seer has appeared nearby.`
+    /// or `] [Faridun] Blocking terrain outside mirage area`). `text` is the
+    /// message after the client bracket; matched by substring (TraXile-style).
+    SystemLine {
+        timestamp: NaiveDateTime,
+        text: String,
+    },
 }
 
 static RE_TIMESTAMP: LazyLock<Regex> =
@@ -78,6 +86,11 @@ static RE_LEVEL_UP: LazyLock<Regex> =
 // `] : ` system lines can't match (the char after `] ` is the colon).
 static RE_NPC: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\] ([^:\]]+): (.+?)\s*$").unwrap());
+
+// The message after the `[… Client N] ` bracket — used as a substring-match
+// fallback for system/tagged league-mechanic lines.
+static RE_MESSAGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[[^\]]*Client \d+\] (.+?)\s*$").unwrap());
 
 pub fn parse_line(line: &str) -> Option<LogEvent> {
     let ts = parse_timestamp(line)?;
@@ -146,6 +159,18 @@ pub fn parse_line(line: &str) -> Option<LogEvent> {
         }
     }
 
+    // Fallback: a system / tagged line that may carry a mechanic signal, matched
+    // by substring downstream (TraXile-style whole-line matching).
+    if let Some(caps) = RE_MESSAGE.captures(line) {
+        let msg = caps[1].trim();
+        if is_mechanic_system_line(msg) {
+            return Some(LogEvent::SystemLine {
+                timestamp: ts,
+                text: msg.to_string(),
+            });
+        }
+    }
+
     None
 }
 
@@ -155,6 +180,21 @@ fn is_player_chat(name: &str) -> bool {
         name.trim_start().chars().next(),
         Some('#' | '$' | '%' | '&' | '@' | '<')
     )
+}
+
+/// Worth emitting as a `SystemLine`? A `: ` system message, or a `[Tag] ` line
+/// whose tag contains a lowercase letter (a league NPC tag like `[Faridun]`,
+/// not an ALLCAPS engine tag like `[JOB]`/`[STORAGE]`).
+fn is_mechanic_system_line(msg: &str) -> bool {
+    if let Some(rest) = msg.strip_prefix(": ") {
+        return !rest.is_empty();
+    }
+    if msg.starts_with('[') {
+        if let Some(close) = msg.find(']') {
+            return msg[1..close].chars().any(|c| c.is_ascii_lowercase());
+        }
+    }
+    false
 }
 
 fn parse_timestamp(line: &str) -> Option<NaiveDateTime> {
@@ -272,6 +312,35 @@ mod tests {
                 assert_eq!(text, "Exile! You are a welcome omen.");
             }
             _ => panic!("expected NpcLine"),
+        }
+    }
+
+    #[test]
+    fn system_line_emitted_for_mirage_and_system_messages() {
+        // Mirage league tag line ([Faridun] has a lowercase tag).
+        let mirage = "2026/03/07 13:07:20 1 a [INFO Client 79164] [Faridun] Blocking terrain outside mirage area";
+        match parse_line(mirage) {
+            Some(LogEvent::SystemLine { text, .. }) => {
+                assert!(text.contains("Blocking terrain outside mirage area"));
+            }
+            other => panic!("expected SystemLine, got {other:?}"),
+        }
+        // `] : ` system message.
+        let seer = "2026/03/07 13:07:20 1 a [INFO Client 79164] : The Nameless Seer has appeared nearby.";
+        assert!(matches!(parse_line(seer), Some(LogEvent::SystemLine { .. })));
+    }
+
+    #[test]
+    fn allcaps_debug_tags_do_not_emit_system_line() {
+        for l in [
+            "2026/03/07 13:07:20 1 a [INFO Client 79164] [JOB] HIGH: 8",
+            "2026/03/07 13:07:20 1 a [INFO Client 79164] [STORAGE] Async: ON",
+            "2026/03/07 13:07:20 1 a [INFO Client 79164] [SHADER] Delay: 0",
+        ] {
+            assert!(
+                !matches!(parse_line(l), Some(LogEvent::SystemLine { .. })),
+                "debug tag wrongly emitted SystemLine: {l}"
+            );
         }
     }
 

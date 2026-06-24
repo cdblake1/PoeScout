@@ -25,6 +25,11 @@ struct EncountersFile {
     by_npc: HashMap<String, EncounterDef>,
     #[serde(default)]
     by_quote: HashMap<String, EncounterDef>,
+    /// Substring keys matched against a whole message (TraXile-style `Contains`).
+    /// Catches system / tagged lines and substrings-of-longer-dialogue that the
+    /// `Name: text` split misses (e.g. Mirage, Nameless Seer, Simulacrum clear).
+    #[serde(default)]
+    by_line: HashMap<String, EncounterDef>,
 }
 
 static TABLE: LazyLock<EncountersFile> = LazyLock::new(|| {
@@ -42,6 +47,19 @@ pub fn match_encounter(npc: &str, text: &str) -> Option<(EncounterDef, bool)> {
     }
     let name = npc.split(',').next().unwrap_or(npc).trim();
     TABLE.by_npc.get(name).map(|d| (d.clone(), false))
+}
+
+/// Substring-match a whole message against the `by_line` table. Returns every
+/// matching def (`kind == "count"`/outcome events are recorded per occurrence by
+/// the caller; others are deduped per category). Applied to both `SystemLine`
+/// text and `NpcLine` text so substring-of-a-longer-line signals are caught.
+pub fn match_line(text: &str) -> Vec<EncounterDef> {
+    TABLE
+        .by_line
+        .iter()
+        .filter(|(key, _)| text.contains(key.as_str()))
+        .map(|(_, def)| def.clone())
+        .collect()
 }
 
 #[cfg(test)]
@@ -99,6 +117,20 @@ mod tests {
         assert_eq!(def.kind.as_deref(), Some("capture"));
         assert_eq!(def.detail.as_deref(), Some("red"));
         assert!(specific);
+    }
+
+    #[test]
+    fn match_line_substring_signals() {
+        assert!(match_line("[Faridun] Blocking terrain outside mirage area")
+            .iter()
+            .any(|d| d.category == "Mirage"));
+        assert!(match_line(": A Reflecting Mist has manifested nearby.")
+            .iter()
+            .any(|d| d.detail.as_deref() == Some("reflecting_mist")));
+        assert!(match_line("So be it. Keep your precious sanity, my agent of chaos.")
+            .iter()
+            .any(|d| d.category == "Simulacrum"));
+        assert!(match_line("just some random log message").is_empty());
     }
 
     #[test]
