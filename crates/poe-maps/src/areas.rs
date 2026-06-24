@@ -296,6 +296,18 @@ static AREA_MECHANICS: &[(&str, &str, Option<&str>)] = &[
     ("Sunken Shingle", "Vaal", None),
     ("Twisted Inquisitorium", "Vaal", None),
     ("Walled-off Ducts", "Vaal", None),
+    // Reliquary key areas (unique-item collection rooms).
+    ("Voidborn Reliquary", "Reliquary", None),
+    ("Timeworn Reliquary", "Reliquary", None),
+    ("Ancient Reliquary", "Reliquary", None),
+    ("Visceral Reliquary", "Reliquary", None),
+    ("Shiny Reliquary", "Reliquary", None),
+    ("Archive Reliquary", "Reliquary", None),
+    ("Cosmic Reliquary", "Reliquary", None),
+    ("Oubliette Reliquary", "Reliquary", None),
+    ("Decaying Reliquary", "Reliquary", None),
+    ("Forgotten Reliquary", "Reliquary", None),
+    ("Vaal Reliquary", "Reliquary", None),
 ];
 
 /// Detect a league mechanic from the area being entered, for mechanics that put
@@ -416,6 +428,14 @@ mod tests {
         assert_eq!(
             mechanic_for_area(None, "Hysteriagate"),
             Some(("Simulacrum".to_string(), None))
+        );
+    }
+
+    #[test]
+    fn mechanic_for_reliquary() {
+        assert_eq!(
+            mechanic_for_area(None, "Voidborn Reliquary"),
+            Some(("Reliquary".to_string(), None))
         );
     }
 

@@ -120,6 +120,24 @@ mod tests {
     }
 
     #[test]
+    fn outcome_lines_resolve_with_detail() {
+        let (def, specific) =
+            match_encounter("The Trialmaster", "You... you won? I honestly didn't expect that of you.")
+                .unwrap();
+        assert_eq!(def.category, "Ultimatum");
+        assert_eq!(def.kind.as_deref(), Some("outcome"));
+        assert_eq!(def.detail.as_deref(), Some("victory"));
+        assert!(specific);
+
+        // Exact-match avoids the "The tournament is over." substring collision.
+        let (won, _) =
+            match_encounter("Navali", "The tournament is over. The outsider... has won.").unwrap();
+        assert_eq!(won.detail.as_deref(), Some("tournament_won"));
+        let (lost, _) = match_encounter("Navali", "The war is over for the outsider.").unwrap();
+        assert_eq!(lost.detail.as_deref(), Some("tournament_lost"));
+    }
+
+    #[test]
     fn match_line_substring_signals() {
         assert!(match_line("[Faridun] Blocking terrain outside mirage area")
             .iter()
