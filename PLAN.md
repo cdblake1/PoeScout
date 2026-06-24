@@ -88,6 +88,13 @@ on-screen OCR (6.6). Full per-mechanic catalog for 3.28 Mirage lives in
 that doc each league.
 
 ### Remaining
+- [x] **6.10** TraXile-parity detection — whole-line substring matcher
+      (`LogEvent::SystemLine` + `encounters::by_line`/`match_line`) unlocking
+      Mirage (`[Faridun]…`), Nameless Seer, Reflecting Mist, Simulacrum
+      full-clear, twice-blessed; ported outcome-detail tables (Ultimatum/
+      Ancestor/Sanctum win-loss) + Reliquary areas; timed sub-activities
+      (`map_subactivities`, DB v5) for Vaal/Sanctum/lab-trial/… inside a map.
+      UI surfacing of sub-activity/outcome detail deferred.
 - [x] **6.9** detection accuracy + honesty + OCR + ToS strategy — chat-channel
       filter in the parser; removed misleading Maven/Envoy presence; ported
       TraXile's fuller area tables (Vaal/logbook-side/bosses/safehouse/lake);
