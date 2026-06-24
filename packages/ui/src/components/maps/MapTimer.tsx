@@ -1,4 +1,4 @@
-import { Component, createSignal, onMount, onCleanup, For, Show } from "solid-js";
+import { Component, createSignal, createMemo, onMount, onCleanup, For, Show } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
 import Sparkline from "./Sparkline";
 import {
@@ -7,6 +7,8 @@ import {
   getMapStats,
   getMapSessions,
   getMapTypeStats,
+  getMechanicStats,
+  getMapHistoryByMechanic,
   getNetWorthHistory,
   getItemsPerHour,
   clearMapHistory,
@@ -15,6 +17,7 @@ import {
   type MapStats,
   type MapSession,
   type MapTypeStat,
+  type MechanicStat,
   type MapEncounter,
   type PortfolioSnapshot,
   type ItemRate,
@@ -60,14 +63,43 @@ function elapsedSince(isoTimestamp: string): number {
   return Math.max(0, (Date.now() - start) / 1000);
 }
 
+// Items/hr pinned-item set, persisted client-side only (6.7a polish).
+const PINNED_ITEMS_KEY = "poescout.itemsPerHour.pinned";
+
+function loadPinnedItems(): Set<string> {
+  try {
+    const raw = localStorage.getItem(PINNED_ITEMS_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? new Set(arr) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function savePinnedItems(s: Set<string>) {
+  try {
+    localStorage.setItem(PINNED_ITEMS_KEY, JSON.stringify([...s]));
+  } catch {}
+}
+
+type ItemSortKey = "name" | "stacks" | "items_per_hour" | "chaos_per_hour" | "drops";
+
 const MapTimer: Component = () => {
   const [state, setState] = createSignal<TrackerState>({ kind: "Idle" });
   const [history, setHistory] = createSignal<MapRun[]>([]);
   const [sessions, setSessions] = createSignal<MapSession[]>([]);
   const [mapTypeStats, setMapTypeStats] = createSignal<MapTypeStat[]>([]);
+  const [mechanicStats, setMechanicStats] = createSignal<MechanicStat[]>([]);
+  const [mechanicFilter, setMechanicFilter] = createSignal<string | null>(null);
   const [netWorth, setNetWorth] = createSignal<PortfolioSnapshot[]>([]);
   const [itemRates, setItemRates] = createSignal<ItemRate[]>([]);
   const [itemScope, setItemScope] = createSignal<ItemRateScope>({ kind: "current_session" });
+  const [sortKey, setSortKey] = createSignal<ItemSortKey>("chaos_per_hour");
+  const [sortDir, setSortDir] = createSignal<"asc" | "desc">("desc");
+  const [pinnedItems, setPinnedItems] = createSignal<Set<string>>(loadPinnedItems());
+  const [showCustomRange, setShowCustomRange] = createSignal(false);
+  const [fromDate, setFromDate] = createSignal("");
+  const [toDate, setToDate] = createSignal("");
   const [stats, setStats] = createSignal<MapStats>({
     total_runs: 0,
     avg_duration_secs: 0,
@@ -92,13 +124,28 @@ const MapTimer: Component = () => {
     }, 1000);
   };
 
+  const loadHistory = () => {
+    const f = mechanicFilter();
+    return f ? getMapHistoryByMechanic(f, 50, 0) : getMapHistory(50, 0);
+  };
+
+  /// Set (or clear, with null) the mechanic history filter and reload the list.
+  const filterByMechanic = async (category: string | null) => {
+    // Toggle off if clicking the active filter again.
+    setMechanicFilter(mechanicFilter() === category ? null : category);
+    try {
+      setHistory(await loadHistory());
+    } catch {}
+  };
+
   const refreshData = async () => {
     try {
-      const [h, st, ses, mts, nw, ir] = await Promise.all([
-        getMapHistory(50, 0),
+      const [h, st, ses, mts, mech, nw, ir] = await Promise.all([
+        loadHistory(),
         getMapStats(),
         getMapSessions(20, 0),
         getMapTypeStats(),
+        getMechanicStats(),
         getNetWorthHistory(50),
         getItemsPerHour(itemScope()),
       ]);
@@ -106,6 +153,7 @@ const MapTimer: Component = () => {
       setStats(st);
       setSessions(ses);
       setMapTypeStats(mts);
+      setMechanicStats(mech);
       setNetWorth(nw);
       setItemRates(ir);
     } catch {}
@@ -123,7 +171,58 @@ const MapTimer: Component = () => {
     if (s.kind === "current_session") return "This session";
     if (s.kind === "last_sessions") return `Last ${s.n}`;
     if (s.kind === "all_time") return "All time";
+    if (s.kind === "date_range") return `${s.start} → ${s.end}`;
     return `Session #${s.id}`;
+  };
+
+  // Header-click sort: same column toggles direction; a new column resets to
+  // its sensible default (alpha asc for the name, value desc for numbers).
+  const toggleSort = (key: ItemSortKey) => {
+    if (sortKey() === key) {
+      setSortDir(sortDir() === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortDir(key === "name" ? "asc" : "desc");
+    }
+  };
+
+  const sortArrow = (key: ItemSortKey) =>
+    sortKey() === key ? (sortDir() === "asc" ? " ▲" : " ▼") : "";
+
+  const togglePin = (name: string) => {
+    const next = new Set(pinnedItems());
+    if (next.has(name)) next.delete(name);
+    else next.add(name);
+    setPinnedItems(next);
+    savePinnedItems(next);
+  };
+
+  // Pinned rows always sit above unpinned; the active sort applies within each
+  // group. Sorting and pinning are purely client-side over the fetched rows.
+  const displayedRates = createMemo(() => {
+    const key = sortKey();
+    const dir = sortDir() === "asc" ? 1 : -1;
+    const cmp = (a: ItemRate, b: ItemRate) => {
+      const d =
+        key === "name"
+          ? a.name.localeCompare(b.name)
+          : (a[key] as number) - (b[key] as number);
+      return d * dir;
+    };
+    const pins = pinnedItems();
+    const rows = itemRates();
+    const pinnedRows = rows.filter((r) => pins.has(r.name)).sort(cmp);
+    const rest = rows.filter((r) => !pins.has(r.name)).sort(cmp);
+    return [...pinnedRows, ...rest];
+  });
+
+  const applyCustomRange = () => {
+    const a = fromDate();
+    const b = toDate();
+    if (!a || !b) return;
+    // Tolerate a reversed range by swapping; the backend expects start <= end.
+    const [start, end] = a <= b ? [a, b] : [b, a];
+    setScope({ kind: "date_range", start, end });
   };
 
   const clearHistory = async () => {
@@ -371,6 +470,68 @@ const MapTimer: Component = () => {
         </div>
       </Show>
 
+      {/* Per-mechanic stats (6.8) */}
+      <Show when={history().length > 0 || mechanicStats().length > 0}>
+        <div class="bg-poe-surface border border-poe-border rounded">
+          <div class="px-3 py-2 border-b border-poe-border text-poe-muted text-xs uppercase tracking-wide">
+            League Mechanics
+          </div>
+          <Show
+            when={mechanicStats().length > 0}
+            fallback={
+              <div class="px-3 py-3 text-poe-muted text-sm">
+                No mechanics detected yet in recorded runs.
+              </div>
+            }
+          >
+          <div class="max-h-64 overflow-y-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-poe-muted text-xs border-b border-poe-border">
+                  <th class="text-left px-3 py-1">Mechanic</th>
+                  <th class="text-right px-3 py-1">Maps</th>
+                  <th class="text-right px-3 py-1">% of Maps</th>
+                  <th class="text-right px-3 py-1">Encounters</th>
+                  <th class="text-right px-3 py-1">Avg Time</th>
+                  <th class="text-right px-3 py-1">Deaths</th>
+                </tr>
+              </thead>
+              <tbody>
+                <For each={mechanicStats()}>
+                  {(m) => (
+                    <tr
+                      class={`border-b border-poe-border/50 hover:bg-poe-bg/50 cursor-pointer ${
+                        mechanicFilter() === m.category ? "bg-poe-bg/60" : ""
+                      }`}
+                      onClick={() => filterByMechanic(m.category)}
+                      title="Filter Recent Runs by this mechanic"
+                    >
+                      <td class="px-3 py-1.5 text-poe-accent">{m.category}</td>
+                      <td class="px-3 py-1.5 text-right">{m.maps_with}</td>
+                      <td class="px-3 py-1.5 text-right tabular-nums">
+                        {m.pct_of_maps.toFixed(1)}%
+                      </td>
+                      <td class="px-3 py-1.5 text-right">{m.encounter_count}</td>
+                      <td class="px-3 py-1.5 text-right tabular-nums">
+                        {formatDuration(m.avg_duration_secs)}
+                      </td>
+                      <td class="px-3 py-1.5 text-right text-poe-muted">{m.total_deaths}</td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </div>
+          </Show>
+          <div class="px-3 py-2 border-t border-poe-border text-poe-muted text-[11px] leading-snug">
+            Detected from the game log (NPC dialogue + special areas). Some mechanics leave
+            <span class="text-poe-text"> no log trace</span> and can't be detected this way:
+            in-map Breach, Legion monoliths, Ritual, Metamorph, Abyss, Eldritch (Exarch/Eater)
+            influence, and often Harvest. A blank here doesn't mean the map was empty.
+          </div>
+        </div>
+      </Show>
+
       {/* Items per hour (6.7a) */}
       <div class="bg-poe-surface border border-poe-border rounded">
         <div class="px-3 py-2 border-b border-poe-border flex items-center justify-between">
@@ -389,13 +550,51 @@ const MapTimer: Component = () => {
                     ? "border-poe-accent text-poe-accent"
                     : "border-poe-border text-poe-muted hover:text-poe-accent"
                 }`}
-                onClick={() => setScope(scope)}
+                onClick={() => {
+                  setShowCustomRange(false);
+                  setScope(scope);
+                }}
               >
                 {label}
               </button>
             ))}
+            <button
+              class={`text-xs px-2 py-0.5 rounded border ${
+                itemScope().kind === "date_range"
+                  ? "border-poe-accent text-poe-accent"
+                  : "border-poe-border text-poe-muted hover:text-poe-accent"
+              }`}
+              onClick={() => setShowCustomRange(!showCustomRange())}
+            >
+              Custom…
+            </button>
           </div>
         </div>
+        <Show when={showCustomRange()}>
+          <div class="px-3 py-2 border-b border-poe-border flex items-center gap-2 text-xs text-poe-muted">
+            <span>From</span>
+            <input
+              type="date"
+              class="bg-poe-bg border border-poe-border rounded px-1 py-0.5"
+              value={fromDate()}
+              onInput={(e) => setFromDate(e.currentTarget.value)}
+            />
+            <span>To</span>
+            <input
+              type="date"
+              class="bg-poe-bg border border-poe-border rounded px-1 py-0.5"
+              value={toDate()}
+              onInput={(e) => setToDate(e.currentTarget.value)}
+            />
+            <button
+              class="px-2 py-0.5 rounded border border-poe-accent text-poe-accent disabled:opacity-40"
+              disabled={!fromDate() || !toDate()}
+              onClick={applyCustomRange}
+            >
+              Apply
+            </button>
+          </div>
+        </Show>
         <Show
           when={itemRates().length > 0}
           fallback={
@@ -414,17 +613,43 @@ const MapTimer: Component = () => {
             <table class="w-full text-sm">
               <thead>
                 <tr class="text-poe-muted text-xs border-b border-poe-border">
-                  <th class="text-left px-3 py-1">Item</th>
-                  <th class="text-right px-3 py-1">Stacks</th>
-                  <th class="text-right px-3 py-1">Items/hr</th>
-                  <th class="text-right px-3 py-1">Chaos/hr</th>
-                  <th class="text-right px-3 py-1">Drops</th>
+                  <th class="w-6 px-2 py-1"></th>
+                  {(
+                    [
+                      ["Item", "name", "text-left"],
+                      ["Stacks", "stacks", "text-right"],
+                      ["Items/hr", "items_per_hour", "text-right"],
+                      ["Chaos/hr", "chaos_per_hour", "text-right"],
+                      ["Drops", "drops", "text-right"],
+                    ] as [string, ItemSortKey, string][]
+                  ).map(([label, key, align]) => (
+                    <th
+                      class={`${align} px-3 py-1 cursor-pointer select-none hover:text-poe-accent`}
+                      onClick={() => toggleSort(key)}
+                    >
+                      {label}
+                      {sortArrow(key)}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                <For each={itemRates()}>
+                <For each={displayedRates()}>
                   {(ir) => (
                     <tr class="border-b border-poe-border/50 hover:bg-poe-bg/50">
+                      <td class="px-2 py-1.5 text-center">
+                        <button
+                          class={`leading-none ${
+                            pinnedItems().has(ir.name)
+                              ? "text-poe-accent"
+                              : "text-poe-border hover:text-poe-accent"
+                          }`}
+                          title={pinnedItems().has(ir.name) ? "Unpin" : "Pin to top"}
+                          onClick={() => togglePin(ir.name)}
+                        >
+                          {pinnedItems().has(ir.name) ? "★" : "☆"}
+                        </button>
+                      </td>
                       <td class="px-3 py-1.5 text-poe-accent">{ir.name}</td>
                       <td class="px-3 py-1.5 text-right tabular-nums">{ir.stacks}</td>
                       <td class="px-3 py-1.5 text-right tabular-nums">
@@ -450,7 +675,18 @@ const MapTimer: Component = () => {
       {/* History table */}
       <div class="bg-poe-surface border border-poe-border rounded">
         <div class="px-3 py-2 border-b border-poe-border text-poe-muted text-xs uppercase tracking-wide flex items-center justify-between">
-          <span>Recent Runs</span>
+          <span class="flex items-center gap-2">
+            Recent Runs
+            <Show when={mechanicFilter()}>
+              <button
+                class="normal-case text-poe-accent hover:text-poe-text text-xs border border-poe-accent/50 rounded px-1.5 py-0.5"
+                onClick={() => filterByMechanic(null)}
+                title="Clear mechanic filter"
+              >
+                {mechanicFilter()} ✕
+              </button>
+            </Show>
+          </span>
           <Show when={history().length > 0}>
             <button
               class="normal-case text-poe-muted hover:text-red-400 text-xs"
@@ -461,7 +697,7 @@ const MapTimer: Component = () => {
           </Show>
         </div>
         <Show
-          when={history().length > 0}
+          when={history().length > 0 || state().kind === "InMap"}
           fallback={
             <div class="px-3 py-4 text-poe-muted text-sm text-center">
               No map runs recorded yet
@@ -480,6 +716,49 @@ const MapTimer: Component = () => {
                 </tr>
               </thead>
               <tbody>
+                {/* Live in-progress run (not yet a history row) */}
+                <Show when={state().kind === "InMap" && !mechanicFilter()}>
+                  <tr class="border-b border-poe-border/50 bg-poe-accent/5">
+                    <td class="px-3 py-1.5 text-poe-accent">
+                      <span class="inline-flex items-center gap-1.5">
+                        <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                        {state().map_name}
+                        <span class="text-[10px] text-poe-muted normal-case">· in progress</span>
+                      </span>
+                      <Show when={(state().encounters?.length ?? 0) > 0}>
+                        <div class="flex flex-wrap gap-1 mt-0.5">
+                          <For each={encounterCategories(state().encounters ?? [])}>
+                            {(c) => (
+                              <span
+                                class="text-[10px] px-1 rounded bg-poe-bg text-poe-muted border border-poe-border cursor-pointer hover:text-poe-accent"
+                                onClick={() => filterByMechanic(c)}
+                                title="Filter Recent Runs by this mechanic"
+                              >
+                                {c}
+                              </span>
+                            )}
+                          </For>
+                        </div>
+                      </Show>
+                    </td>
+                    <td class="px-3 py-1.5 text-right text-poe-muted">
+                      {state().map_tier != null
+                        ? `T${state().map_tier}`
+                        : state().area_level != null
+                          ? `T${Math.max(1, (state().area_level as number) - 67)}`
+                          : "-"}
+                    </td>
+                    <td class="px-3 py-1.5 text-right tabular-nums">{formatDuration(elapsed())}</td>
+                    <td
+                      class={`px-3 py-1.5 text-right ${
+                        (state().deaths ?? 0) > 0 ? "text-red-400" : "text-poe-muted"
+                      }`}
+                    >
+                      {state().deaths ?? 0}
+                    </td>
+                    <td class="px-3 py-1.5 text-right text-poe-muted">—</td>
+                  </tr>
+                </Show>
                 <For each={history()}>
                   {(run) => (
                     <tr class="border-b border-poe-border/50 hover:bg-poe-bg/50">
@@ -489,7 +768,13 @@ const MapTimer: Component = () => {
                           <div class="flex flex-wrap gap-1 mt-0.5">
                             <For each={encounterCategories(run.encounters)}>
                               {(c) => (
-                                <span class="text-[10px] px-1 rounded bg-poe-bg text-poe-muted border border-poe-border">
+                                <span
+                                  class={`text-[10px] px-1 rounded bg-poe-bg text-poe-muted border border-poe-border cursor-pointer hover:text-poe-accent ${
+                                    mechanicFilter() === c ? "border-poe-accent text-poe-accent" : ""
+                                  }`}
+                                  onClick={() => filterByMechanic(c)}
+                                  title="Filter Recent Runs by this mechanic"
+                                >
                                   {c}
                                 </span>
                               )}

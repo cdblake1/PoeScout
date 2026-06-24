@@ -110,8 +110,9 @@ pub struct CaptureTestResult {
 /// composited / DirectX windows. Returns the dimensions and the fraction of
 /// non-black pixels so the user can tell at a glance whether capture worked.
 /// No file I/O, no new dependencies — keeps the spike cheap.
-#[tauri::command]
-pub fn capture_poe_test() -> Result<CaptureTestResult, String> {
+/// Capture the PoE client area as a top-down BGRA8 buffer via `PrintWindow`
+/// (`PW_RENDERFULLCONTENT`). Shared by the capture spike and the OCR path.
+fn capture_client_bgra() -> Result<(Vec<u8>, i32, i32), String> {
     unsafe {
         let hwnd = FindWindowW(None, w!("Path of Exile"))
             .map_err(|_| "Path of Exile window not found".to_string())?;
@@ -167,22 +168,128 @@ pub fn capture_poe_test() -> Result<CaptureTestResult, String> {
             return Err("PrintWindow / GetDIBits failed (likely DX-refused).".into());
         }
 
-        let mut non_black: u64 = 0;
-        for px in pixels.chunks_exact(4) {
-            if px[0] > 0 || px[1] > 0 || px[2] > 0 {
-                non_black += 1;
-            }
+        Ok((pixels, width, height))
+    }
+}
+
+#[tauri::command]
+pub fn capture_poe_test() -> Result<CaptureTestResult, String> {
+    let (pixels, width, height) = capture_client_bgra()?;
+    let pixel_count = (width as usize) * (height as usize);
+    let mut non_black: u64 = 0;
+    for px in pixels.chunks_exact(4) {
+        if px[0] > 0 || px[1] > 0 || px[2] > 0 {
+            non_black += 1;
         }
-        let fraction = if pixel_count > 0 {
-            non_black as f64 / pixel_count as f64
-        } else {
-            0.0
-        };
-        Ok(CaptureTestResult {
-            width: width as u32,
-            height: height as u32,
-            non_black_fraction: fraction,
-        })
+    }
+    let fraction = if pixel_count > 0 {
+        non_black as f64 / pixel_count as f64
+    } else {
+        0.0
+    };
+    Ok(CaptureTestResult {
+        width: width as u32,
+        height: height as u32,
+        non_black_fraction: fraction,
+    })
+}
+
+/// Crop a sub-rectangle from a top-down BGRA buffer, clamped to bounds, forcing
+/// alpha to 255 (PrintWindow leaves alpha 0, which OCR treats as transparent).
+fn crop_bgra(
+    src: &[u8],
+    w: i32,
+    h: i32,
+    x: i32,
+    y: i32,
+    cw: i32,
+    ch: i32,
+) -> Result<(Vec<u8>, i32, i32), String> {
+    let x = x.clamp(0, w.max(0));
+    let y = y.clamp(0, h.max(0));
+    let cw = cw.min(w - x);
+    let ch = ch.min(h - y);
+    if cw <= 0 || ch <= 0 {
+        return Err("OCR region is empty or out of bounds".into());
+    }
+    let stride = (w as usize) * 4;
+    let mut out = Vec::with_capacity((cw as usize) * (ch as usize) * 4);
+    for row in 0..ch as usize {
+        let sy = y as usize + row;
+        let start = sy * stride + (x as usize) * 4;
+        for px in src[start..start + (cw as usize) * 4].chunks_exact(4) {
+            out.extend_from_slice(&[px[0], px[1], px[2], 0xFF]);
+        }
+    }
+    Ok((out, cw, ch))
+}
+
+/// Run Windows.Media.Ocr over a tight BGRA8 buffer; returns the recognized text.
+fn ocr_bgra(pixels: &[u8], width: i32, height: i32) -> Result<String, String> {
+    use windows::Graphics::Imaging::{BitmapPixelFormat, SoftwareBitmap};
+    use windows::Media::Ocr::OcrEngine;
+    use windows::Security::Cryptography::CryptographicBuffer;
+
+    let buffer = CryptographicBuffer::CreateFromByteArray(pixels)
+        .map_err(|e| format!("OCR buffer: {e}"))?;
+    let bmp = SoftwareBitmap::CreateCopyFromBuffer(&buffer, BitmapPixelFormat::Bgra8, width, height)
+        .map_err(|e| format!("OCR bitmap: {e}"))?;
+    let engine = OcrEngine::TryCreateFromUserProfileLanguages()
+        .map_err(|e| format!("OCR engine (no language pack?): {e}"))?;
+    let result = engine
+        .RecognizeAsync(&bmp)
+        .map_err(|e| format!("OCR recognize: {e}"))?
+        .get()
+        .map_err(|e| format!("OCR await: {e}"))?;
+    Ok(result.Text().map_err(|e| format!("OCR text: {e}"))?.to_string())
+}
+
+/// Capture the PoE client, crop to a calibrated rectangle, and OCR it. Returns the
+/// raw recognized text (used by the calibration "test" button).
+#[tauri::command]
+pub fn ocr_region(x: i32, y: i32, width: i32, height: i32) -> Result<String, String> {
+    let (pixels, w, h) = capture_client_bgra()?;
+    let (crop, cw, ch) = crop_bgra(&pixels, w, h, x, y, width, height)?;
+    ocr_bgra(&crop, cw, ch)
+}
+
+/// Like `ocr_region` but parses the first integer out of the recognized text
+/// (commas/spaces/thousands separators stripped) — for numeric resource panels.
+pub fn ocr_region_int(x: i32, y: i32, width: i32, height: i32) -> Result<i64, String> {
+    let text = ocr_region(x, y, width, height)?;
+    extract_int(&text).ok_or_else(|| format!("no number found in OCR text: {text:?}"))
+}
+
+/// Pull the first integer from OCR text, ignoring thousands separators and stray
+/// non-digits (e.g. "1,234 / 5,000" → 1234).
+fn extract_int(text: &str) -> Option<i64> {
+    let mut digits = String::new();
+    for c in text.chars() {
+        if c.is_ascii_digit() {
+            digits.push(c);
+        } else if c == ',' || c == '.' || c == ' ' {
+            // thousands separator inside a number — keep scanning this run
+            if !digits.is_empty() {
+                continue;
+            }
+        } else if !digits.is_empty() {
+            break; // end of the first numeric run
+        }
+    }
+    digits.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_int_handles_separators_and_noise() {
+        assert_eq!(extract_int("1,234"), Some(1234));
+        assert_eq!(extract_int("Gold: 12 500"), Some(12500));
+        assert_eq!(extract_int("1,234 / 5,000"), Some(1234));
+        assert_eq!(extract_int("no digits here"), None);
+        assert_eq!(extract_int("99"), Some(99));
     }
 }
 

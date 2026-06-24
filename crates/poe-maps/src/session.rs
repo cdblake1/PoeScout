@@ -51,6 +51,7 @@ mod tests {
             map_tier: Some(16),
             started_at: "2025-05-20T14:00:00".into(),
             deaths: 0,
+            encounters: Vec::new(),
         }
     }
 

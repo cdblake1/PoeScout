@@ -143,6 +143,187 @@ pub fn is_idle_zone(area_id: Option<&str>, area_name: &str) -> bool {
     )
 }
 
+/// Special areas whose *entry* signals a league mechanic that emits no NPC line.
+/// Each entry maps an exact area display name to `(category, detail)`. Entering
+/// one records a `MapEncounter` on the current run (the parent map for sub-areas).
+///
+/// This is the area-based counterpart to the NPC-dialogue table in
+/// `data/encounters.json`. Names are sourced from the detection catalog in
+/// `docs/poe-mechanics-resources.md`; keep the two in sync each league.
+static AREA_MECHANICS: &[(&str, &str, Option<&str>)] = &[
+    // Legion — Timeless Conflict (5-splinter merged Domain entered from a map).
+    ("Domain of Timeless Conflict", "Legion", Some("domain")),
+    // Simulacrum — the wave areas (entered via Simulacrum/Splinters at the device).
+    ("Lunacy's Watch", "Simulacrum", None),
+    ("The Bridge Enraptured", "Simulacrum", None),
+    ("The Syndrome Encampment", "Simulacrum", None),
+    ("Hysteriagate", "Simulacrum", None),
+    ("Oriath Delusion", "Simulacrum", None),
+    // Breach — Breachstone Domains (one per Breachlord).
+    ("Xoph's Domain", "Breach", Some("domain")),
+    ("Tul's Domain", "Breach", Some("domain")),
+    ("Esh's Domain", "Breach", Some("domain")),
+    ("Uul-Netol's Domain", "Breach", Some("domain")),
+    ("Chayula's Domain", "Breach", Some("domain")),
+    // Sanctum — the Forbidden Sanctum floor areas.
+    ("The Forbidden Sanctum", "Sanctum", None),
+    ("Sanctum Archives", "Sanctum", None),
+    ("Sanctum Cathedral", "Sanctum", None),
+    ("Sanctum Necropolis", "Sanctum", None),
+    ("Sanctum Vaults", "Sanctum", None),
+    ("Sanctum Mausoleum", "Sanctum", None),
+    // Incursion — the final Temple of Atzoatl run.
+    ("The Temple of Atzoatl", "Temple", None),
+    // Harvest / Ancestor / Abyss / Ultimatum — dedicated areas.
+    ("The Sacred Grove", "Harvest", None),
+    ("The Halls of the Dead", "Ancestor", None),
+    ("Abyssal Depths", "Abyss", None),
+    ("The Tower of Ordeals", "Ultimatum", Some("trialmaster")),
+    // Expedition — Logbook areas (main expedition zones).
+    ("Battleground Graves", "Expedition", Some("logbook")),
+    ("Bluffs", "Expedition", Some("logbook")),
+    ("Desert Ruins", "Expedition", Some("logbook")),
+    ("Dried Riverbed", "Expedition", Some("logbook")),
+    ("Forest Ruins", "Expedition", Some("logbook")),
+    ("Karui Wargraves", "Expedition", Some("logbook")),
+    ("Mountainside", "Expedition", Some("logbook")),
+    ("Rotting Temple", "Expedition", Some("logbook")),
+    ("Sarn Slums", "Expedition", Some("logbook")),
+    ("Scrublands", "Expedition", Some("logbook")),
+    ("Shipwreck Reef", "Expedition", Some("logbook")),
+    ("Utzaal Outskirts", "Expedition", Some("logbook")),
+    ("Volcanic Island", "Expedition", Some("logbook")),
+    // Labyrinth — Trials of Ascendancy that appear inside maps.
+    ("Trial of Piercing Truth", "Lab", Some("trial")),
+    ("Trial of Swirling Fear", "Lab", Some("trial")),
+    ("Trial of Crippling Grief", "Lab", Some("trial")),
+    ("Trial of Burning Rage", "Lab", Some("trial")),
+    ("Trial of Lingering Pain", "Lab", Some("trial")),
+    ("Trial of Stinging Doubt", "Lab", Some("trial")),
+    // Pinnacle boss arenas (apostrophe forms as they appear in Client.txt).
+    ("Eye of the Storm", "Boss", Some("Sirus")),
+    ("The Shaper's Realm", "Boss", Some("Shaper")),
+    ("Absence of Value and Meaning", "Boss", Some("Elder")),
+    ("Absence of Mercy and Empathy", "Boss", Some("Maven")),
+    ("The Maven's Crucible", "Boss", Some("Maven")),
+    ("Absence of Patience and Wisdom", "Boss", Some("Searing Exarch")),
+    ("Absence of Symmetry and Harmony", "Boss", Some("Eater of Worlds")),
+    ("Polaric Void", "Boss", Some("Black Star")),
+    ("Seething Chyme", "Boss", Some("Infinite Hunger")),
+    ("The Apex of Sacrifice", "Boss", Some("Atziri")),
+    ("The Alluring Abyss", "Boss", Some("Uber Atziri")),
+    ("Mastermind's Lair", "Boss", Some("Catarina")),
+    ("Tane's Laboratory", "Boss", Some("Tane")),
+    // Affliction (Wildwood) pinnacle bosses.
+    ("Moment of Reverence", "Boss", Some("Incarnation of Dread")),
+    ("Moment of Trauma", "Boss", Some("Incarnation of Fear")),
+    ("Moment of Loneliness", "Boss", Some("Incarnation of Neglect")),
+    ("Courtyard of Wasting", "Boss", Some("Neglected Flame")),
+    ("Theatre of Lies", "Boss", Some("Deceitful God")),
+    ("Chambers of Impurity", "Boss", Some("Cardinal of Fear")),
+    // Settlers (Kalguur) pinnacle bosses.
+    ("Crux of Nothingness", "Boss", Some("King in the Mists")),
+    ("Starfall Crater", "Boss", Some("Black Knight")),
+    ("Sailor's Folly", "Boss", Some("Admiral Valerius")),
+    ("Abandoned Port", "Boss", Some("Sasan")),
+    // Betrayal safehouse (entered from a Syndicate member's intelligence).
+    ("Syndicate Hideout", "Betrayal", Some("safehouse")),
+    // Kalandra mirror lake.
+    ("The Lake of Kalandra", "Kalandra", None),
+    // Expedition — Logbook *side* areas (nested in a logbook zone).
+    ("Chittering Chamber", "Expedition", Some("logbook")),
+    ("Forgotten Grotto", "Expedition", Some("logbook")),
+    ("Fortified Redoubt", "Expedition", Some("logbook")),
+    ("Heroic Tomb", "Expedition", Some("logbook")),
+    ("Lost Sanctum", "Expedition", Some("logbook")),
+    ("Mushroom Thicket", "Expedition", Some("logbook")),
+    ("Noxious Gutter", "Expedition", Some("logbook")),
+    ("Sandy Vestige", "Expedition", Some("logbook")),
+    ("Spectral Hollow", "Expedition", Some("logbook")),
+    // Vaal corrupted side areas (the 53 corruption side-zones; entered from a map).
+    ("Abandoned Dam", "Vaal", None),
+    ("Ancient Catacomb", "Vaal", None),
+    ("Arcane Chambers", "Vaal", None),
+    ("Blind Alley", "Vaal", None),
+    ("Clouded Ledge", "Vaal", None),
+    ("Clouded Ridge", "Vaal", None),
+    ("Concealed Caldarium", "Vaal", None),
+    ("Concealed Cavity", "Vaal", None),
+    ("Covered-up Hollow", "Vaal", None),
+    ("Cremated Archives", "Vaal", None),
+    ("Deathly Chambers", "Vaal", None),
+    ("Desolate Isle", "Vaal", None),
+    ("Desolate Track", "Vaal", None),
+    ("Disused Furnace", "Vaal", None),
+    ("Dusty Bluff", "Vaal", None),
+    ("Entombed Alcove", "Vaal", None),
+    ("Entombed Chamber", "Vaal", None),
+    ("Evacuated Quarter", "Vaal", None),
+    ("Flooded Complex", "Vaal", None),
+    ("Forbidden Archives", "Vaal", None),
+    ("Forbidden Chamber", "Vaal", None),
+    ("Forbidden Shrine", "Vaal", None),
+    ("Forgotten Conduit", "Vaal", None),
+    ("Forgotten Gulch", "Vaal", None),
+    ("Forgotten Oubliette", "Vaal", None),
+    ("Frozen Springs", "Vaal", None),
+    ("Haunted Mineshaft", "Vaal", None),
+    ("Hidden Patch", "Vaal", None),
+    ("Inner Grounds", "Vaal", None),
+    ("Isolated Sound", "Vaal", None),
+    ("Moonlit Chambers", "Vaal", None),
+    ("Mystical Clearing", "Vaal", None),
+    ("Narrow Ravine", "Vaal", None),
+    ("Neglected Cellar", "Vaal", None),
+    ("Quarantined Quarters", "Vaal", None),
+    ("Radiant Pools", "Vaal", None),
+    ("Reclaimed Barracks", "Vaal", None),
+    ("Remote Gulch", "Vaal", None),
+    ("Restricted Collection", "Vaal", None),
+    ("Restricted Gallery", "Vaal", None),
+    ("Sacred Chambers", "Vaal", None),
+    ("Sealed Basement", "Vaal", None),
+    ("Sealed Corridors", "Vaal", None),
+    ("Sealed Repository", "Vaal", None),
+    ("Secluded Canal", "Vaal", None),
+    ("Secluded Copse", "Vaal", None),
+    ("Secret Laboratory", "Vaal", None),
+    ("Shifting Sands", "Vaal", None),
+    ("Side Chapel", "Vaal", None),
+    ("Stagnant Canal", "Vaal", None),
+    ("Strange Sinkhole", "Vaal", None),
+    ("Suffocating Fissure", "Vaal", None),
+    ("Sunken Shingle", "Vaal", None),
+    ("Twisted Inquisitorium", "Vaal", None),
+    ("Walled-off Ducts", "Vaal", None),
+    // Reliquary key areas (unique-item collection rooms).
+    ("Voidborn Reliquary", "Reliquary", None),
+    ("Timeworn Reliquary", "Reliquary", None),
+    ("Ancient Reliquary", "Reliquary", None),
+    ("Visceral Reliquary", "Reliquary", None),
+    ("Shiny Reliquary", "Reliquary", None),
+    ("Archive Reliquary", "Reliquary", None),
+    ("Cosmic Reliquary", "Reliquary", None),
+    ("Oubliette Reliquary", "Reliquary", None),
+    ("Decaying Reliquary", "Reliquary", None),
+    ("Forgotten Reliquary", "Reliquary", None),
+    ("Vaal Reliquary", "Reliquary", None),
+];
+
+/// Detect a league mechanic from the area being entered, for mechanics that put
+/// you in a dedicated area instead of printing an NPC line (Legion Domains,
+/// Simulacrum, Breachstone Domains, …). Returns `(category, detail)`.
+///
+/// In-map Breach/Legion monoliths, Ritual, Metamorph, and Abyss cracks emit no
+/// log signal at all and are intentionally absent — see the limitations section
+/// of `docs/poe-mechanics-resources.md`.
+pub fn mechanic_for_area(_area_id: Option<&str>, area_name: &str) -> Option<(String, Option<String>)> {
+    AREA_MECHANICS
+        .iter()
+        .find(|(name, _, _)| *name == area_name)
+        .map(|(_, category, detail)| (category.to_string(), detail.map(|d| d.to_string())))
+}
+
 /// Map tier from the area level: T1 = level 68 … T16 = 83, T17 = 84.
 /// Returns `None` for sub-68 (campaign / non-map) levels.
 pub fn map_tier(area_level: u32) -> Option<u32> {
@@ -203,6 +384,65 @@ mod tests {
         );
         // A map by id is not an idle zone.
         assert!(!is_idle_zone(Some("MapWorldsStrand"), "Strand"));
+    }
+
+    #[test]
+    fn mechanic_for_special_areas() {
+        assert_eq!(
+            mechanic_for_area(None, "Domain of Timeless Conflict"),
+            Some(("Legion".to_string(), Some("domain".to_string())))
+        );
+        assert_eq!(
+            mechanic_for_area(None, "Oriath Delusion"),
+            Some(("Simulacrum".to_string(), None))
+        );
+        assert_eq!(
+            mechanic_for_area(None, "Xoph's Domain"),
+            Some(("Breach".to_string(), Some("domain".to_string())))
+        );
+    }
+
+    #[test]
+    fn mechanic_for_expanded_areas() {
+        assert_eq!(
+            mechanic_for_area(None, "Sanctum Cathedral"),
+            Some(("Sanctum".to_string(), None))
+        );
+        assert_eq!(
+            mechanic_for_area(None, "The Temple of Atzoatl"),
+            Some(("Temple".to_string(), None))
+        );
+        assert_eq!(
+            mechanic_for_area(None, "Eye of the Storm"),
+            Some(("Boss".to_string(), Some("Sirus".to_string())))
+        );
+        assert_eq!(
+            mechanic_for_area(None, "Volcanic Island"),
+            Some(("Expedition".to_string(), Some("logbook".to_string())))
+        );
+        assert_eq!(
+            mechanic_for_area(None, "Trial of Burning Rage"),
+            Some(("Lab".to_string(), Some("trial".to_string())))
+        );
+        // Corrected from the slice-1 guess: the 4th Simulacrum area is "Hysteriagate".
+        assert_eq!(
+            mechanic_for_area(None, "Hysteriagate"),
+            Some(("Simulacrum".to_string(), None))
+        );
+    }
+
+    #[test]
+    fn mechanic_for_reliquary() {
+        assert_eq!(
+            mechanic_for_area(None, "Voidborn Reliquary"),
+            Some(("Reliquary".to_string(), None))
+        );
+    }
+
+    #[test]
+    fn mechanic_for_plain_map_is_none() {
+        assert_eq!(mechanic_for_area(Some("MapWorldsStrand"), "Strand"), None);
+        assert_eq!(mechanic_for_area(None, "Hideout"), None);
     }
 
     #[test]

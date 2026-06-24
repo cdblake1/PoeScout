@@ -1,6 +1,6 @@
 use crate::state::{
     ItemRate, ItemRateScope, LootItem, MapEncounter, MapRun, MapSession, MapStats, MapTypeStat,
-    PortfolioSnapshot, ResourceSnapshot,
+    MechanicStat, PortfolioSnapshot, ResourceSnapshot, SubActivity,
 };
 use anyhow::Result;
 use rusqlite::Connection;
@@ -131,6 +131,24 @@ impl MapDb {
             )?;
         }
 
+        // v5 — Phase 6.10: timed sub-areas inside a map (Vaal/Sanctum/lab-trial/…).
+        if version < 5 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS map_subactivities (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     run_id INTEGER NOT NULL REFERENCES map_runs(id),
+                     kind TEXT NOT NULL,
+                     name TEXT NOT NULL,
+                     started_at TEXT NOT NULL,
+                     ended_at TEXT NOT NULL,
+                     duration_secs REAL NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_map_subactivities_run
+                     ON map_subactivities(run_id);
+                 PRAGMA user_version = 5;",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -167,6 +185,20 @@ impl MapDb {
                 rusqlite::params![run_id, enc.category, enc.detail, enc.timestamp],
             )?;
         }
+        for sub in &run.subactivities {
+            conn.execute(
+                "INSERT INTO map_subactivities (run_id, kind, name, started_at, ended_at, duration_secs)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    run_id,
+                    sub.kind,
+                    sub.name,
+                    sub.started_at,
+                    sub.ended_at,
+                    sub.duration_secs
+                ],
+            )?;
+        }
         Ok(run_id)
     }
 
@@ -180,6 +212,27 @@ impl MapDb {
                 category: row.get(0)?,
                 detail: row.get(1)?,
                 timestamp: row.get(2)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    fn subactivities_for(conn: &Connection, run_id: i64) -> Result<Vec<SubActivity>> {
+        let mut stmt = conn.prepare(
+            "SELECT kind, name, started_at, ended_at, duration_secs FROM map_subactivities
+             WHERE run_id = ?1 ORDER BY started_at",
+        )?;
+        let rows = stmt.query_map([run_id], |row| {
+            Ok(SubActivity {
+                kind: row.get(0)?,
+                name: row.get(1)?,
+                started_at: row.get(2)?,
+                ended_at: row.get(3)?,
+                duration_secs: row.get(4)?,
             })
         })?;
         let mut out = Vec::new();
@@ -218,6 +271,7 @@ impl MapDb {
                 deaths: row.get(13)?,
                 level_ups,
                 encounters: Vec::new(),
+                subactivities: Vec::new(),
                 loot_chaos: row.get(15)?,
             })
         })?;
@@ -229,6 +283,64 @@ impl MapDb {
         for run in &mut runs {
             if let Some(id) = run.id {
                 run.encounters = Self::encounters_for(&conn, id)?;
+                run.subactivities = Self::subactivities_for(&conn, id)?;
+            }
+        }
+        Ok(runs)
+    }
+
+    /// Like `get_history`, but only runs that contain at least one encounter of
+    /// the given mechanic `category` (6.8 history filter).
+    pub fn get_history_by_mechanic(
+        &self,
+        category: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<MapRun>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, map_name, area_id, area_level, area_type, map_tier, instance_id, league,
+                    session_id, started_at, ended_at, duration_secs, hideout_secs, deaths, level_ups,
+                    loot_chaos
+             FROM map_runs r
+             WHERE EXISTS (
+                SELECT 1 FROM map_encounters e WHERE e.run_id = r.id AND e.category = ?1
+             )
+             ORDER BY started_at DESC LIMIT ?2 OFFSET ?3",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![category, limit, offset], |row| {
+            let level_ups_str: String = row.get(14)?;
+            let level_ups: Vec<u32> = serde_json::from_str(&level_ups_str).unwrap_or_default();
+            Ok(MapRun {
+                id: Some(row.get(0)?),
+                map_name: row.get(1)?,
+                area_id: row.get(2)?,
+                area_level: row.get(3)?,
+                area_type: row.get(4)?,
+                map_tier: row.get(5)?,
+                instance_id: row.get(6)?,
+                league: row.get(7)?,
+                session_id: row.get(8)?,
+                started_at: row.get(9)?,
+                ended_at: row.get(10)?,
+                duration_secs: row.get(11)?,
+                hideout_secs: row.get(12)?,
+                deaths: row.get(13)?,
+                level_ups,
+                encounters: Vec::new(),
+                subactivities: Vec::new(),
+                loot_chaos: row.get(15)?,
+            })
+        })?;
+        let mut runs = Vec::new();
+        for row in rows {
+            runs.push(row?);
+        }
+        drop(stmt);
+        for run in &mut runs {
+            if let Some(id) = run.id {
+                run.encounters = Self::encounters_for(&conn, id)?;
+                run.subactivities = Self::subactivities_for(&conn, id)?;
             }
         }
         Ok(runs)
@@ -297,6 +409,65 @@ impl MapDb {
                 avg_duration_secs: row.get(3)?,
                 avg_loot_chaos: row.get(4)?,
                 total_deaths: row.get(5)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /// Per-mechanic aggregates, grouped by encounter `category`. `pct_of_maps`
+    /// is computed against the total run count. The inner query collapses to one
+    /// row per (category, run) so per-run figures (duration/deaths/loot) aren't
+    /// inflated by mechanics that log multiple rows per map (e.g. captures).
+    pub fn get_mechanic_stats(&self) -> Result<Vec<MechanicStat>> {
+        let conn = self.conn.lock().unwrap();
+        let total_runs: f64 = conn.query_row("SELECT COUNT(*) FROM map_runs", [], |r| {
+            let n: i64 = r.get(0)?;
+            Ok(n as f64)
+        })?;
+        let mut stmt = conn.prepare(
+            "SELECT category,
+                    SUM(enc_count) AS encounter_count,
+                    COUNT(*) AS maps_with,
+                    COALESCE(AVG(duration_secs), 0) AS avg_duration,
+                    AVG(loot_chaos) AS avg_loot,
+                    COALESCE(SUM(deaths), 0) AS total_deaths
+             FROM (
+                SELECT e.category AS category,
+                       COUNT(*) AS enc_count,
+                       r.duration_secs AS duration_secs,
+                       r.loot_chaos AS loot_chaos,
+                       r.deaths AS deaths
+                FROM map_encounters e
+                JOIN map_runs r ON r.id = e.run_id
+                GROUP BY e.category, e.run_id
+             )
+             GROUP BY category
+             ORDER BY maps_with DESC, category ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let category: String = row.get(0)?;
+            let encounter_count: u32 = row.get(1)?;
+            let maps_with: u32 = row.get(2)?;
+            let avg_duration_secs: f64 = row.get(3)?;
+            let avg_loot_chaos: Option<f64> = row.get(4)?;
+            let total_deaths: u32 = row.get(5)?;
+            let pct_of_maps = if total_runs > 0.0 {
+                maps_with as f64 / total_runs * 100.0
+            } else {
+                0.0
+            };
+            Ok(MechanicStat {
+                category,
+                encounter_count,
+                maps_with,
+                pct_of_maps,
+                avg_duration_secs,
+                avg_loot_chaos,
+                total_deaths,
             })
         })?;
         let mut out = Vec::new();
@@ -447,6 +618,7 @@ impl MapDb {
                     deaths: row.get(13)?,
                     level_ups,
                     encounters: Vec::new(),
+                    subactivities: Vec::new(),
                     loot_chaos: row.get(15)?,
                 })
             })?;
@@ -459,6 +631,7 @@ impl MapDb {
         for run in &mut runs {
             if let Some(rid) = run.id {
                 run.encounters = Self::encounters_for(&conn, rid)?;
+                run.subactivities = Self::subactivities_for(&conn, rid)?;
             }
         }
         Ok(runs)
@@ -468,7 +641,9 @@ impl MapDb {
     /// Sessions are left intact.
     pub fn clear_history(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute_batch("DELETE FROM map_encounters; DELETE FROM map_runs;")?;
+        conn.execute_batch(
+            "DELETE FROM map_subactivities; DELETE FROM map_encounters; DELETE FROM map_runs;",
+        )?;
         Ok(())
     }
 
@@ -602,9 +777,12 @@ impl MapDb {
         let conn = self.conn.lock().unwrap();
         // Resolve scope → SQL filter + bind params; CurrentSession runs an extra
         // lookup against map_sessions and degrades to AllTime if nothing's open.
-        let (where_clause, params): (String, Vec<i64>) = match scope {
+        use rusqlite::types::Value;
+        let (where_clause, params): (String, Vec<Value>) = match scope {
             ItemRateScope::AllTime => ("1 = 1".into(), vec![]),
-            ItemRateScope::Session { id } => ("session_id = ?1".into(), vec![*id]),
+            ItemRateScope::Session { id } => {
+                ("session_id = ?1".into(), vec![Value::Integer(*id)])
+            }
             ItemRateScope::CurrentSession => {
                 let active_id: Option<i64> = conn
                     .query_row(
@@ -615,7 +793,7 @@ impl MapDb {
                     )
                     .ok();
                 match active_id {
-                    Some(id) => ("session_id = ?1".into(), vec![id]),
+                    Some(id) => ("session_id = ?1".into(), vec![Value::Integer(id)]),
                     None => ("1 = 1".into(), vec![]),
                 }
             }
@@ -625,18 +803,23 @@ impl MapDb {
                     ORDER BY started_at DESC LIMIT ?1
                 )"
                 .into(),
-                vec![*n as i64],
+                vec![Value::Integer(*n as i64)],
+            ),
+            ItemRateScope::DateRange { start, end } => (
+                // Lexical prefix compare on the YYYY-MM-DD head of started_at —
+                // timezone-safe (no SQLite date() interpretation), inclusive both ends.
+                "substr(started_at, 1, 10) BETWEEN ?1 AND ?2".into(),
+                vec![Value::Text(start.clone()), Value::Text(end.clone())],
             ),
         };
 
         let active_sql = format!(
             "SELECT COALESCE(SUM(duration_secs), 0) FROM map_runs WHERE {where_clause}"
         );
-        let active_secs: f64 = match params.len() {
-            0 => conn.query_row(&active_sql, [], |r| r.get(0))?,
-            1 => conn.query_row(&active_sql, [params[0]], |r| r.get(0))?,
-            _ => unreachable!("scope binds at most one parameter"),
-        };
+        let active_secs: f64 =
+            conn.query_row(&active_sql, rusqlite::params_from_iter(params.iter()), |r| {
+                r.get(0)
+            })?;
 
         let items_sql = format!(
             "SELECT name,
@@ -675,13 +858,9 @@ impl MapDb {
                 chaos_per_hour,
             })
         };
-        let rows = match params.len() {
-            0 => stmt.query_map([], map_row)?.collect::<Result<Vec<_>, _>>()?,
-            1 => stmt
-                .query_map([params[0]], map_row)?
-                .collect::<Result<Vec<_>, _>>()?,
-            _ => unreachable!(),
-        };
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(params.iter()), map_row)?
+            .collect::<Result<Vec<_>, _>>()?;
         // Sort in Rust (SQL ORDER BY would require duplicating the expression).
         let mut rows = rows;
         rows.sort_by(|a, b| {
@@ -836,6 +1015,28 @@ mod tests {
             .encounters
             .iter()
             .any(|e| e.category == "Bestiary" && e.detail.as_deref() == Some("yellow")));
+    }
+
+    #[test]
+    fn subactivities_persist_and_load() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        let run = MapRun {
+            subactivities: vec![SubActivity {
+                kind: "Vaal".into(),
+                name: "Side Chapel".into(),
+                started_at: "2025-05-20T14:00:41".into(),
+                ended_at: "2025-05-20T14:01:41".into(),
+                duration_secs: 60.0,
+            }],
+            ..test_run()
+        };
+        db.insert_map_run(&run).unwrap();
+        let history = db.get_history(10, 0).unwrap();
+        assert_eq!(history[0].subactivities.len(), 1);
+        assert_eq!(history[0].subactivities[0].kind, "Vaal");
+        assert_eq!(history[0].subactivities[0].name, "Side Chapel");
+        assert!((history[0].subactivities[0].duration_secs - 60.0).abs() < 0.01);
     }
 
     #[test]
@@ -1086,6 +1287,93 @@ mod tests {
         assert_eq!(strand_stat.run_count, 2);
         assert!((strand_stat.avg_duration_secs - 150.0).abs() < 0.1);
         assert_eq!(strand_stat.total_deaths, 1);
+    }
+
+    #[test]
+    fn history_by_mechanic_filters() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        let enc = |cat: &str| MapEncounter {
+            category: cat.into(),
+            detail: None,
+            timestamp: "2025-05-20T14:00:20".into(),
+        };
+        db.insert_map_run(&MapRun {
+            map_name: "WithLegion".into(),
+            started_at: "2025-05-20T14:10:00".into(),
+            encounters: vec![enc("Legion"), enc("Delve")],
+            ..test_run()
+        })
+        .unwrap();
+        db.insert_map_run(&MapRun {
+            map_name: "WithDelveOnly".into(),
+            started_at: "2025-05-20T14:20:00".into(),
+            encounters: vec![enc("Delve")],
+            ..test_run()
+        })
+        .unwrap();
+
+        let legion = db.get_history_by_mechanic("Legion", 50, 0).unwrap();
+        assert_eq!(legion.len(), 1);
+        assert_eq!(legion[0].map_name, "WithLegion");
+        assert!(legion[0].encounters.iter().any(|e| e.category == "Legion"));
+
+        let delve = db.get_history_by_mechanic("Delve", 50, 0).unwrap();
+        assert_eq!(delve.len(), 2, "both runs have a Delve encounter");
+
+        assert!(db.get_history_by_mechanic("Ritual", 50, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn mechanic_stats_aggregates() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        let enc = |cat: &str, detail: Option<&str>| MapEncounter {
+            category: cat.into(),
+            detail: detail.map(|d| d.into()),
+            timestamp: "2025-05-20T14:00:20".into(),
+        };
+        // Run A: Legion + two beast captures, 100s, 1 death.
+        db.insert_map_run(&MapRun {
+            duration_secs: 100.0,
+            deaths: 1,
+            encounters: vec![
+                enc("Legion", Some("domain")),
+                enc("Bestiary", Some("yellow")),
+                enc("Bestiary", Some("red")),
+            ],
+            ..test_run()
+        })
+        .unwrap();
+        // Run B: Legion only, 200s, 0 deaths.
+        db.insert_map_run(&MapRun {
+            duration_secs: 200.0,
+            deaths: 0,
+            encounters: vec![enc("Legion", Some("domain"))],
+            ..test_run()
+        })
+        .unwrap();
+        // Run C: no mechanics.
+        db.insert_map_run(&MapRun {
+            duration_secs: 50.0,
+            ..test_run()
+        })
+        .unwrap();
+
+        let stats = db.get_mechanic_stats().unwrap();
+        // Ordered by maps_with desc → Legion (2 maps) first.
+        let legion = &stats[0];
+        assert_eq!(legion.category, "Legion");
+        assert_eq!(legion.maps_with, 2);
+        assert_eq!(legion.encounter_count, 2);
+        assert!((legion.avg_duration_secs - 150.0).abs() < 0.1);
+        assert_eq!(legion.total_deaths, 1);
+        assert!((legion.pct_of_maps - 200.0 / 3.0).abs() < 0.1);
+
+        let bestiary = stats.iter().find(|m| m.category == "Bestiary").unwrap();
+        assert_eq!(bestiary.maps_with, 1);
+        assert_eq!(bestiary.encounter_count, 2, "both captures counted");
+        assert!((bestiary.avg_duration_secs - 100.0).abs() < 0.1);
     }
 
     #[test]
@@ -1407,5 +1695,48 @@ mod tests {
         assert_eq!(rates[0].items_per_hour, 0.0);
         assert_eq!(rates[0].chaos_per_hour, 0.0);
         assert!(rates[0].total_chaos > 0.0); // unaffected
+    }
+
+    #[test]
+    fn items_per_hour_date_range_filters_by_day_inclusive() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        // One run per day, 3600s each. The range [06-10, 06-15] must include
+        // both boundary days and exclude 06-01 and 06-20.
+        let day = |d: &str| MapRun {
+            started_at: format!("{d}T14:00:00"),
+            ended_at: format!("{d}T15:00:00"),
+            duration_secs: 3600.0,
+            ..test_run()
+        };
+        let div = |stack: u32| LootItem {
+            name: "Divine Orb".into(),
+            type_line: "Divine Orb".into(),
+            stack_size: stack,
+            unit_chaos: Some(100.0),
+            total_chaos: Some(100.0 * stack as f64),
+            frame_type: Some(5),
+        };
+        for (d, stack) in [
+            ("2026-06-01", 1), // before — excluded
+            ("2026-06-10", 2), // start boundary — included
+            ("2026-06-15", 3), // end boundary — included
+            ("2026-06-20", 9), // after — excluded
+        ] {
+            let r = db.insert_map_run(&day(d)).unwrap();
+            db.set_run_loot(r, 100.0, &[div(stack)]).unwrap();
+        }
+
+        let rates = db
+            .get_items_per_hour(&ItemRateScope::DateRange {
+                start: "2026-06-10".into(),
+                end: "2026-06-15".into(),
+            })
+            .unwrap();
+        assert_eq!(rates.len(), 1);
+        assert_eq!(rates[0].name, "Divine Orb");
+        assert_eq!(rates[0].stacks, 5); // 2 + 3, boundary days in; 1 and 9 out
+        assert!((rates[0].active_secs - 7200.0).abs() < 0.001); // two 1h runs
+        assert!((rates[0].items_per_hour - 2.5).abs() < 0.01); // 5 stacks / 2h
     }
 }

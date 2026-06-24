@@ -59,6 +59,8 @@ pub struct StashClient {
     poesessid: Option<String>,
     account_name: Option<String>,
     last_request: Option<Instant>,
+    /// Header-derived delay to apply before the next request (proactive throttle).
+    next_delay: Duration,
 }
 
 impl StashClient {
@@ -71,6 +73,7 @@ impl StashClient {
             poesessid: None,
             account_name: None,
             last_request: None,
+            next_delay: Duration::ZERO,
         }
     }
 
@@ -89,17 +92,13 @@ impl StashClient {
     }
 
     async fn rate_limited_get(&mut self, url: &str) -> Result<reqwest::Response, String> {
-        if let Some(last) = self.last_request {
-            let elapsed = last.elapsed();
-            if elapsed < MIN_REQUEST_INTERVAL {
-                tokio::time::sleep(MIN_REQUEST_INTERVAL - elapsed).await;
-            }
-        }
+        const MAX_RETRIES: u32 = 3;
 
         let sessid = self
             .poesessid
             .as_ref()
-            .ok_or_else(|| "No POESESSID set".to_string())?;
+            .ok_or_else(|| "No POESESSID set".to_string())?
+            .clone();
 
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -107,34 +106,63 @@ impl StashClient {
             HeaderValue::from_str(&format!("POESESSID={}", sessid))
                 .map_err(|e| format!("Invalid POESESSID: {}", e))?,
         );
-        headers.insert(
-            "X-Requested-With",
-            HeaderValue::from_static("XMLHttpRequest"),
-        );
+        headers.insert("X-Requested-With", HeaderValue::from_static("XMLHttpRequest"));
 
-        tracing::debug!("Stash API request: {}", url);
-        let resp = self
-            .http
-            .get(url)
-            .headers(headers)
-            .send()
-            .await
-            .map_err(|e| format!("Stash API request failed: {}", e))?;
+        let mut attempt = 0u32;
+        loop {
+            // Pace requests: respect the fixed floor and any delay the API's
+            // rate-limit headers told us to wait after the previous response.
+            if let Some(last) = self.last_request {
+                let gap = MIN_REQUEST_INTERVAL.max(self.next_delay);
+                let elapsed = last.elapsed();
+                if elapsed < gap {
+                    tokio::time::sleep(gap - elapsed).await;
+                }
+            }
 
-        self.last_request = Some(Instant::now());
+            tracing::debug!("Stash API request: {}", url);
+            let resp = self
+                .http
+                .get(url)
+                .headers(headers.clone())
+                .send()
+                .await
+                .map_err(|e| format!("Stash API request failed: {}", e))?;
 
-        if !resp.status().is_success() {
+            self.last_request = Some(Instant::now());
+            self.next_delay = next_delay_from_headers(resp.headers());
             let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            tracing::error!("Stash API HTTP {}: {}", status, body);
-            return match status.as_u16() {
-                429 => Err("Rate limited — try again in a minute".to_string()),
-                401 | 403 => Err("Authentication failed — check your POESESSID".to_string()),
-                _ => Err(format!("Stash API returned HTTP {}: {}", status, body)),
-            };
-        }
 
-        Ok(resp)
+            // 429: honor Retry-After / rate-limit state and retry instead of failing.
+            if status.as_u16() == 429 && attempt < MAX_RETRIES {
+                let wait = parse_retry_after(resp.headers())
+                    .filter(|d| !d.is_zero())
+                    .or_else(|| Some(self.next_delay).filter(|d| !d.is_zero()))
+                    .unwrap_or_else(|| Duration::from_secs(2u64.pow(attempt + 1)))
+                    .min(Duration::from_secs(60));
+                attempt += 1;
+                tracing::warn!(
+                    "Stash API 429 — backing off {:?} (retry {}/{})",
+                    wait,
+                    attempt,
+                    MAX_RETRIES
+                );
+                tokio::time::sleep(wait).await;
+                continue;
+            }
+
+            if !status.is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                tracing::error!("Stash API HTTP {}: {}", status, body);
+                return match status.as_u16() {
+                    429 => Err("Rate limited — try again in a minute".to_string()),
+                    401 | 403 => Err("Authentication failed — check your POESESSID".to_string()),
+                    _ => Err(format!("Stash API returned HTTP {}: {}", status, body)),
+                };
+            }
+
+            return Ok(resp);
+        }
     }
 
     pub async fn validate_session(&mut self) -> Result<(), String> {
@@ -227,5 +255,117 @@ impl StashClient {
             .await
             .map_err(|e| format!("Failed to parse character items: {}", e))?;
         Ok(raw.items)
+    }
+}
+
+// --- Rate-limit header parsing (GGG returns these on every response) ---
+
+/// Parse a rate-limit header value into `(max_or_current, period_secs, restrict_secs)`
+/// triplets. Values look like `"45:60:60"` or `"8:10:10,15:60:60"` (comma-joined rules).
+fn parse_triplets(s: &str) -> Vec<(u64, u64, u64)> {
+    s.split(',')
+        .filter_map(|part| {
+            let mut it = part.trim().split(':');
+            let a = it.next()?.trim().parse().ok()?;
+            let b = it.next()?.trim().parse().ok()?;
+            let c = it.next()?.trim().parse().ok()?;
+            Some((a, b, c))
+        })
+        .collect()
+}
+
+/// How long to wait before the next request to stay under one rule, given its
+/// policy (`max:period:restrict`) and state (`current:period:active_restrict`)
+/// header values (each may hold several comma-joined rules; the strictest wins).
+fn rule_delay(policy: &str, state: &str) -> Duration {
+    let pol = parse_triplets(policy);
+    let st = parse_triplets(state);
+    let mut wait = Duration::ZERO;
+    for ((max, period, _), (cur, _, active)) in pol.iter().zip(st.iter()) {
+        let d = if *active > 0 {
+            Duration::from_secs(*active) // a restriction is currently active
+        } else if *max > 0 && *cur >= *max {
+            Duration::from_secs(*period) // window full → wait it out
+        } else if *max > 0 && *cur + 1 >= *max {
+            Duration::from_secs(*period) / (*max as u32) // pace the final slot
+        } else {
+            Duration::ZERO
+        };
+        if d > wait {
+            wait = d;
+        }
+    }
+    wait
+}
+
+/// Largest required delay across the account/ip/client rate-limit rules.
+fn next_delay_from_headers(headers: &HeaderMap) -> Duration {
+    let mut wait = Duration::ZERO;
+    for rule in ["account", "ip", "client"] {
+        let policy = headers.get(format!("x-rate-limit-{rule}").as_str());
+        let state = headers.get(format!("x-rate-limit-{rule}-state").as_str());
+        if let (Some(p), Some(s)) = (policy, state) {
+            if let (Ok(p), Ok(s)) = (p.to_str(), s.to_str()) {
+                let d = rule_delay(p, s);
+                if d > wait {
+                    wait = d;
+                }
+            }
+        }
+    }
+    wait
+}
+
+/// Parse `Retry-After` (delta-seconds form) into a Duration.
+fn parse_retry_after(headers: &HeaderMap) -> Option<Duration> {
+    let v = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
+    v.trim().parse::<u64>().ok().map(Duration::from_secs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rule_delay_headroom_is_zero() {
+        // 2/45 hits used against a 45-per-60s rule → plenty of room.
+        assert_eq!(rule_delay("45:60:60", "2:60:0"), Duration::ZERO);
+    }
+
+    #[test]
+    fn rule_delay_active_restriction_waits() {
+        // active restriction of 12s in the state's third field.
+        assert_eq!(rule_delay("45:60:60", "46:60:12"), Duration::from_secs(12));
+    }
+
+    #[test]
+    fn rule_delay_full_window_waits_period() {
+        // at the cap, no active restriction → wait the period out.
+        assert_eq!(rule_delay("5:10:30", "5:10:0"), Duration::from_secs(10));
+    }
+
+    #[test]
+    fn rule_delay_strictest_rule_wins() {
+        // two rules; the second is at its cap → its period dominates.
+        assert_eq!(
+            rule_delay("8:10:10,15:60:60", "1:10:0,15:60:0"),
+            Duration::from_secs(60)
+        );
+    }
+
+    #[test]
+    fn retry_after_parsed() {
+        let mut h = HeaderMap::new();
+        h.insert(reqwest::header::RETRY_AFTER, HeaderValue::from_static("17"));
+        assert_eq!(parse_retry_after(&h), Some(Duration::from_secs(17)));
+        assert_eq!(parse_retry_after(&HeaderMap::new()), None);
+    }
+
+    #[test]
+    fn next_delay_reads_account_rule() {
+        let mut h = HeaderMap::new();
+        h.insert("x-rate-limit-account", HeaderValue::from_static("5:10:30"));
+        h.insert("x-rate-limit-account-state", HeaderValue::from_static("5:10:0"));
+        assert_eq!(next_delay_from_headers(&h), Duration::from_secs(10));
     }
 }

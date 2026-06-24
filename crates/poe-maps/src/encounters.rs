@@ -25,6 +25,11 @@ struct EncountersFile {
     by_npc: HashMap<String, EncounterDef>,
     #[serde(default)]
     by_quote: HashMap<String, EncounterDef>,
+    /// Substring keys matched against a whole message (TraXile-style `Contains`).
+    /// Catches system / tagged lines and substrings-of-longer-dialogue that the
+    /// `Name: text` split misses (e.g. Mirage, Nameless Seer, Simulacrum clear).
+    #[serde(default)]
+    by_line: HashMap<String, EncounterDef>,
 }
 
 static TABLE: LazyLock<EncountersFile> = LazyLock::new(|| {
@@ -42,6 +47,19 @@ pub fn match_encounter(npc: &str, text: &str) -> Option<(EncounterDef, bool)> {
     }
     let name = npc.split(',').next().unwrap_or(npc).trim();
     TABLE.by_npc.get(name).map(|d| (d.clone(), false))
+}
+
+/// Substring-match a whole message against the `by_line` table. Returns every
+/// matching def (`kind == "count"`/outcome events are recorded per occurrence by
+/// the caller; others are deduped per category). Applied to both `SystemLine`
+/// text and `NpcLine` text so substring-of-a-longer-line signals are caught.
+pub fn match_line(text: &str) -> Vec<EncounterDef> {
+    TABLE
+        .by_line
+        .iter()
+        .filter(|(key, _)| text.contains(key.as_str()))
+        .map(|(_, def)| def.clone())
+        .collect()
 }
 
 #[cfg(test)]
@@ -66,6 +84,79 @@ mod tests {
         assert_eq!(def.category, "Bestiary");
         assert_eq!(def.detail.as_deref(), Some("yellow"));
         assert!(specific);
+    }
+
+    #[test]
+    fn matches_heist_rogue_by_first_name() {
+        let (def, specific) =
+            match_encounter("Karst, the Lockpick", "I'll get that lock open.").unwrap();
+        assert_eq!(def.category, "Heist");
+        assert!(!specific);
+    }
+
+    #[test]
+    fn matches_sanctum_and_ancestor_npcs() {
+        let (sanctum, _) =
+            match_encounter("Lycia, Unholy Heretic", "None are innocent.").unwrap();
+        assert_eq!(sanctum.category, "Sanctum");
+        let (ancestor, _) = match_encounter("Navali", "The Trial continues!").unwrap();
+        assert_eq!(ancestor.category, "Ancestor");
+        let (ultimatum, _) =
+            match_encounter("The Trialmaster", "A battlefield chilled by winter's hate.").unwrap();
+        assert_eq!(ultimatum.category, "Ultimatum");
+    }
+
+    #[test]
+    fn red_beast_capture_quote_has_detail() {
+        let (def, specific) = match_encounter(
+            "Einhar, Beastmaster",
+            "Great job, Exile! Einhar will take the captured beast to the Menagerie.",
+        )
+        .unwrap();
+        assert_eq!(def.category, "Bestiary");
+        assert_eq!(def.kind.as_deref(), Some("capture"));
+        assert_eq!(def.detail.as_deref(), Some("red"));
+        assert!(specific);
+    }
+
+    #[test]
+    fn outcome_lines_resolve_with_detail() {
+        let (def, specific) =
+            match_encounter("The Trialmaster", "You... you won? I honestly didn't expect that of you.")
+                .unwrap();
+        assert_eq!(def.category, "Ultimatum");
+        assert_eq!(def.kind.as_deref(), Some("outcome"));
+        assert_eq!(def.detail.as_deref(), Some("victory"));
+        assert!(specific);
+
+        // Exact-match avoids the "The tournament is over." substring collision.
+        let (won, _) =
+            match_encounter("Navali", "The tournament is over. The outsider... has won.").unwrap();
+        assert_eq!(won.detail.as_deref(), Some("tournament_won"));
+        let (lost, _) = match_encounter("Navali", "The war is over for the outsider.").unwrap();
+        assert_eq!(lost.detail.as_deref(), Some("tournament_lost"));
+    }
+
+    #[test]
+    fn match_line_substring_signals() {
+        assert!(match_line("[Faridun] Blocking terrain outside mirage area")
+            .iter()
+            .any(|d| d.category == "Mirage"));
+        assert!(match_line(": A Reflecting Mist has manifested nearby.")
+            .iter()
+            .any(|d| d.detail.as_deref() == Some("reflecting_mist")));
+        assert!(match_line("So be it. Keep your precious sanity, my agent of chaos.")
+            .iter()
+            .any(|d| d.category == "Simulacrum"));
+        assert!(match_line("just some random log message").is_empty());
+    }
+
+    #[test]
+    fn maven_witness_dialogue_no_longer_tags() {
+        // The Maven / The Envoy narrate map bosses during normal atlas play; their
+        // presence must NOT be tagged as a mechanic (genuine Maven = boss arena).
+        assert!(match_encounter("The Maven", "Violence...").is_none());
+        assert!(match_encounter("The Envoy", "I followed her though I did not want to.").is_none());
     }
 
     #[test]

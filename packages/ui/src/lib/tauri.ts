@@ -186,6 +186,7 @@ export interface TrackerState {
   map_tier?: number | null;
   started_at?: string;
   deaths?: number;
+  encounters?: MapEncounter[];
 }
 
 export interface MapEncounter {
@@ -211,7 +212,16 @@ export interface MapRun {
   deaths: number;
   level_ups: number[];
   encounters: MapEncounter[];
+  subactivities?: SubActivity[];
   loot_chaos: number | null;
+}
+
+export interface SubActivity {
+  kind: string;
+  name: string;
+  started_at: string;
+  ended_at: string;
+  duration_secs: number;
 }
 
 export interface LootItem {
@@ -234,6 +244,16 @@ export interface MapTypeStat {
   map_name: string;
   area_id: string | null;
   run_count: number;
+  avg_duration_secs: number;
+  avg_loot_chaos: number | null;
+  total_deaths: number;
+}
+
+export interface MechanicStat {
+  category: string;
+  encounter_count: number;
+  maps_with: number;
+  pct_of_maps: number;
   avg_duration_secs: number;
   avg_loot_chaos: number | null;
   total_deaths: number;
@@ -285,6 +305,57 @@ export async function getMapTypeStats(): Promise<MapTypeStat[]> {
   return invoke("get_map_type_stats");
 }
 
+// Per-mechanic stats (6.8)
+
+export async function getMechanicStats(): Promise<MechanicStat[]> {
+  return invoke("get_mechanic_stats");
+}
+
+// OCR resources (6.6b)
+
+export interface ResourceSnapshot {
+  id: number | null;
+  source: string;
+  value: number;
+  timestamp: string;
+}
+
+/** OCR a calibrated client-area rectangle; returns the raw recognized text. */
+export async function ocrRegion(
+  x: number,
+  y: number,
+  width: number,
+  height: number
+): Promise<string> {
+  return invoke("ocr_region", { x, y, width, height });
+}
+
+/** OCR a region for a numeric resource, store it as `ocr:<source>`, return the value. */
+export async function recordResourceOcr(
+  source: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number
+): Promise<number> {
+  return invoke("record_resource_ocr", { source, x, y, width, height });
+}
+
+export async function getResourceSnapshots(
+  source: string,
+  limit: number
+): Promise<ResourceSnapshot[]> {
+  return invoke("get_resource_snapshots", { source, limit });
+}
+
+export async function getMapHistoryByMechanic(
+  category: string,
+  limit: number,
+  offset: number
+): Promise<MapRun[]> {
+  return invoke("get_map_history_by_mechanic", { category, limit, offset });
+}
+
 // Items per hour (6.7a)
 
 /** Discriminated union mirroring `ItemRateScope` in Rust (`#[serde(tag="kind")]`). */
@@ -292,7 +363,8 @@ export type ItemRateScope =
   | { kind: "current_session" }
   | { kind: "session"; id: number }
   | { kind: "last_sessions"; n: number }
-  | { kind: "all_time" };
+  | { kind: "all_time" }
+  | { kind: "date_range"; start: string; end: string };
 
 export interface ItemRate {
   name: string;
