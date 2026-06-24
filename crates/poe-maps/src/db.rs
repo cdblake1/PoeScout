@@ -1,6 +1,6 @@
 use crate::state::{
     ItemRate, ItemRateScope, LootItem, MapEncounter, MapRun, MapSession, MapStats, MapTypeStat,
-    MechanicStat, PortfolioSnapshot, ResourceSnapshot,
+    MechanicStat, PortfolioSnapshot, ResourceSnapshot, SubActivity,
 };
 use anyhow::Result;
 use rusqlite::Connection;
@@ -131,6 +131,24 @@ impl MapDb {
             )?;
         }
 
+        // v5 — Phase 6.10: timed sub-areas inside a map (Vaal/Sanctum/lab-trial/…).
+        if version < 5 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS map_subactivities (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     run_id INTEGER NOT NULL REFERENCES map_runs(id),
+                     kind TEXT NOT NULL,
+                     name TEXT NOT NULL,
+                     started_at TEXT NOT NULL,
+                     ended_at TEXT NOT NULL,
+                     duration_secs REAL NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_map_subactivities_run
+                     ON map_subactivities(run_id);
+                 PRAGMA user_version = 5;",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -167,6 +185,20 @@ impl MapDb {
                 rusqlite::params![run_id, enc.category, enc.detail, enc.timestamp],
             )?;
         }
+        for sub in &run.subactivities {
+            conn.execute(
+                "INSERT INTO map_subactivities (run_id, kind, name, started_at, ended_at, duration_secs)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    run_id,
+                    sub.kind,
+                    sub.name,
+                    sub.started_at,
+                    sub.ended_at,
+                    sub.duration_secs
+                ],
+            )?;
+        }
         Ok(run_id)
     }
 
@@ -180,6 +212,27 @@ impl MapDb {
                 category: row.get(0)?,
                 detail: row.get(1)?,
                 timestamp: row.get(2)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    fn subactivities_for(conn: &Connection, run_id: i64) -> Result<Vec<SubActivity>> {
+        let mut stmt = conn.prepare(
+            "SELECT kind, name, started_at, ended_at, duration_secs FROM map_subactivities
+             WHERE run_id = ?1 ORDER BY started_at",
+        )?;
+        let rows = stmt.query_map([run_id], |row| {
+            Ok(SubActivity {
+                kind: row.get(0)?,
+                name: row.get(1)?,
+                started_at: row.get(2)?,
+                ended_at: row.get(3)?,
+                duration_secs: row.get(4)?,
             })
         })?;
         let mut out = Vec::new();
@@ -218,6 +271,7 @@ impl MapDb {
                 deaths: row.get(13)?,
                 level_ups,
                 encounters: Vec::new(),
+                subactivities: Vec::new(),
                 loot_chaos: row.get(15)?,
             })
         })?;
@@ -229,6 +283,7 @@ impl MapDb {
         for run in &mut runs {
             if let Some(id) = run.id {
                 run.encounters = Self::encounters_for(&conn, id)?;
+                run.subactivities = Self::subactivities_for(&conn, id)?;
             }
         }
         Ok(runs)
@@ -273,6 +328,7 @@ impl MapDb {
                 deaths: row.get(13)?,
                 level_ups,
                 encounters: Vec::new(),
+                subactivities: Vec::new(),
                 loot_chaos: row.get(15)?,
             })
         })?;
@@ -284,6 +340,7 @@ impl MapDb {
         for run in &mut runs {
             if let Some(id) = run.id {
                 run.encounters = Self::encounters_for(&conn, id)?;
+                run.subactivities = Self::subactivities_for(&conn, id)?;
             }
         }
         Ok(runs)
@@ -561,6 +618,7 @@ impl MapDb {
                     deaths: row.get(13)?,
                     level_ups,
                     encounters: Vec::new(),
+                    subactivities: Vec::new(),
                     loot_chaos: row.get(15)?,
                 })
             })?;
@@ -573,6 +631,7 @@ impl MapDb {
         for run in &mut runs {
             if let Some(rid) = run.id {
                 run.encounters = Self::encounters_for(&conn, rid)?;
+                run.subactivities = Self::subactivities_for(&conn, rid)?;
             }
         }
         Ok(runs)
@@ -582,7 +641,9 @@ impl MapDb {
     /// Sessions are left intact.
     pub fn clear_history(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute_batch("DELETE FROM map_encounters; DELETE FROM map_runs;")?;
+        conn.execute_batch(
+            "DELETE FROM map_subactivities; DELETE FROM map_encounters; DELETE FROM map_runs;",
+        )?;
         Ok(())
     }
 
@@ -954,6 +1015,28 @@ mod tests {
             .encounters
             .iter()
             .any(|e| e.category == "Bestiary" && e.detail.as_deref() == Some("yellow")));
+    }
+
+    #[test]
+    fn subactivities_persist_and_load() {
+        let dir = tempdir().unwrap();
+        let db = MapDb::open(&dir.path().join("test.db")).unwrap();
+        let run = MapRun {
+            subactivities: vec![SubActivity {
+                kind: "Vaal".into(),
+                name: "Side Chapel".into(),
+                started_at: "2025-05-20T14:00:41".into(),
+                ended_at: "2025-05-20T14:01:41".into(),
+                duration_secs: 60.0,
+            }],
+            ..test_run()
+        };
+        db.insert_map_run(&run).unwrap();
+        let history = db.get_history(10, 0).unwrap();
+        assert_eq!(history[0].subactivities.len(), 1);
+        assert_eq!(history[0].subactivities[0].kind, "Vaal");
+        assert_eq!(history[0].subactivities[0].name, "Side Chapel");
+        assert!((history[0].subactivities[0].duration_secs - 60.0).abs() < 0.01);
     }
 
     #[test]

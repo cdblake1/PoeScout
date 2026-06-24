@@ -212,7 +212,16 @@ export interface MapRun {
   deaths: number;
   level_ups: number[];
   encounters: MapEncounter[];
+  subactivities?: SubActivity[];
   loot_chaos: number | null;
+}
+
+export interface SubActivity {
+  kind: string;
+  name: string;
+  started_at: string;
+  ended_at: string;
+  duration_secs: number;
 }
 
 export interface LootItem {

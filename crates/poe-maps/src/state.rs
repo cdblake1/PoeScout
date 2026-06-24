@@ -33,6 +33,19 @@ pub struct MapEncounter {
     pub timestamp: String,
 }
 
+/// A timed sub-area entered inside a map (Vaal side area, Sanctum floor, lab
+/// trial, Abyssal Depths, Legion Domain, …) — its own start/end/duration while
+/// the parent map run continues (TraXile's nested-activity model).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SubActivity {
+    /// Mechanic category if known (e.g. "Vaal", "Sanctum", "Lab"), else "subarea".
+    pub kind: String,
+    pub name: String,
+    pub started_at: String,
+    pub ended_at: String,
+    pub duration_secs: f64,
+}
+
 /// A priced loot line for a run (from the per-map inventory diff, 6.3).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LootItem {
@@ -73,6 +86,9 @@ pub struct MapRun {
     pub level_ups: Vec<u32>,
     #[serde(default)]
     pub encounters: Vec<MapEncounter>,
+    /// Timed sub-areas entered inside this map (6.10).
+    #[serde(default)]
+    pub subactivities: Vec<SubActivity>,
     /// Total chaos value of loot from this run (set post-completion by the
     /// inventory-diff pricing in 6.3b; None until then).
     #[serde(default)]
@@ -234,9 +250,44 @@ struct RunAcc {
     level_ups: Vec<u32>,
     hideout_secs: f64,
     encounters: Vec<MapEncounter>,
+    /// A sub-area currently open inside this map (timed until we leave it).
+    current_sub: Option<SubAcc>,
+    subactivities: Vec<SubActivity>,
+}
+
+/// An open (not-yet-closed) sub-area inside a map run.
+#[derive(Clone)]
+struct SubAcc {
+    kind: String,
+    name: String,
+    started_at: NaiveDateTime,
 }
 
 impl RunAcc {
+    /// Close the open sub-area (if any), recording its duration.
+    fn close_sub(&mut self, ended_at: NaiveDateTime) {
+        if let Some(sub) = self.current_sub.take() {
+            let dur = (ended_at - sub.started_at).num_milliseconds().max(0) as f64 / 1000.0;
+            self.subactivities.push(SubActivity {
+                kind: sub.kind,
+                name: sub.name,
+                started_at: fmt(sub.started_at),
+                ended_at: fmt(ended_at),
+                duration_secs: dur,
+            });
+        }
+    }
+
+    /// Open a new sub-area, closing any previously-open one first.
+    fn open_sub(&mut self, kind: String, name: String, started_at: NaiveDateTime) {
+        self.close_sub(started_at);
+        self.current_sub = Some(SubAcc {
+            kind,
+            name,
+            started_at,
+        });
+    }
+
     fn to_map_run(&self, ended_at: NaiveDateTime, league: Option<String>) -> MapRun {
         let duration = (ended_at - self.started_at).num_milliseconds().max(0) as f64 / 1000.0;
         MapRun {
@@ -256,6 +307,7 @@ impl RunAcc {
             deaths: self.deaths,
             level_ups: self.level_ups.clone(),
             encounters: self.encounters.clone(),
+            subactivities: self.subactivities.clone(),
             loot_chaos: None,
         }
     }
@@ -419,6 +471,8 @@ impl StateMachine {
             level_ups: Vec::new(),
             hideout_secs: 0.0,
             encounters: Vec::new(),
+            current_sub: None,
+            subactivities: Vec::new(),
         }
     }
 
@@ -441,13 +495,19 @@ impl StateMachine {
             },
         );
         match prev {
-            InnerState::InMap { run } => Some(run.to_map_run(now, self.league.clone())),
+            InnerState::InMap { mut run } => {
+                run.close_sub(now);
+                Some(run.to_map_run(now, self.league.clone()))
+            }
             InnerState::Idle {
                 since,
                 zone_name,
                 suspended,
             } => {
-                let completed = suspended.map(|run| run.to_map_run(since, self.league.clone()));
+                let completed = suspended.map(|mut run| {
+                    run.close_sub(since);
+                    run.to_map_run(since, self.league.clone())
+                });
                 self.inner = InnerState::Idle {
                     since,
                     zone_name,
@@ -501,6 +561,11 @@ impl StateMachine {
                 // computed before area_name/area_id are moved into the run below;
                 // recorded on the resulting run once the lifecycle settles.
                 let mechanic = mechanic_for_area(area_id.as_deref(), &area_name);
+                // Sub-activity kind for a sub-area (the mechanic category, else "subarea").
+                let sub_kind = mechanic
+                    .as_ref()
+                    .map(|(c, _)| c.clone())
+                    .unwrap_or_else(|| "subarea".to_string());
 
                 if is_idle_type(atype) {
                     // Entering town/hideout/hub: suspend the run (do NOT complete it yet).
@@ -513,11 +578,14 @@ impl StateMachine {
                         },
                     );
                     self.inner = match prev {
-                        InnerState::InMap { run } => InnerState::Idle {
-                            since: timestamp,
-                            zone_name: area_name,
-                            suspended: Some(run),
-                        },
+                        InnerState::InMap { mut run } => {
+                            run.close_sub(timestamp); // close any open sub-area on town entry
+                            InnerState::Idle {
+                                since: timestamp,
+                                zone_name: area_name,
+                                suspended: Some(run),
+                            }
+                        }
                         // Already idle: keep the earliest `since` and the suspended run.
                         InnerState::Idle {
                             since, suspended, ..
@@ -570,13 +638,15 @@ impl StateMachine {
                                 };
                             }
                         }
-                        InnerState::InMap { run } => {
+                        InnerState::InMap { mut run } => {
                             if atype == AreaType::Map {
                                 if same_run(&run, area_id.as_deref(), &area_name, seed)
                                 {
                                     // Re-entered the same map (no town between) → ignore.
+                                    run.close_sub(timestamp);
                                     self.inner = InnerState::InMap { run };
                                 } else {
+                                    run.close_sub(timestamp);
                                     events.push(StateEvent::MapCompleted(
                                         run.to_map_run(timestamp, self.league.clone()),
                                     ));
@@ -587,9 +657,15 @@ impl StateMachine {
                                         ),
                                     };
                                 }
+                            } else if same_run(&run, area_id.as_deref(), &area_name, seed) {
+                                // Returned to the parent map (no regen line, so it
+                                // classifies as non-Map) → close the open sub-area.
+                                run.close_sub(timestamp);
+                                self.inner = InnerState::InMap { run };
                             } else {
-                                // Sub-area (Vaal side area, lab trial, abyssal depths, …):
-                                // stay in the current run.
+                                // A genuinely different sub-area (Vaal/lab/Sanctum/…):
+                                // stay in the run, open a timed sub-activity.
+                                run.open_sub(sub_kind, area_name.clone(), timestamp);
                                 self.inner = InnerState::InMap { run };
                             }
                         }
@@ -861,6 +937,35 @@ mod tests {
         });
         assert!(completed(&evts).is_empty());
         assert!(matches!(sm.state(), TrackerState::InMap { map_name, .. } if map_name == "Strand"));
+    }
+
+    #[test]
+    fn vaal_subarea_records_timed_subactivity() {
+        let mut sm = StateMachine::new(ts(0));
+        enter_map(&mut sm, 10, "Strand", 83); // seed 10
+        // Enter a Vaal side area (its own seed, non-map id).
+        sm.process(LogEvent::AreaLevelHint {
+            timestamp: ts(40),
+            area_level: 83,
+            area_id: "VaalCity".into(),
+            seed: Some(999),
+        });
+        sm.process(LogEvent::AreaChange {
+            timestamp: ts(41),
+            area_name: "Side Chapel".into(),
+        });
+        // Return to the parent map (no Generating line → no seed) → close the sub.
+        sm.process(LogEvent::AreaChange {
+            timestamp: ts(101),
+            area_name: "Strand".into(),
+        });
+        let run = sm.finalize_current(ts(200)).unwrap();
+        assert_eq!(run.map_name, "Strand");
+        assert_eq!(run.subactivities.len(), 1);
+        let sub = &run.subactivities[0];
+        assert_eq!(sub.kind, "Vaal"); // "Side Chapel" is a Vaal area in AREA_MECHANICS
+        assert_eq!(sub.name, "Side Chapel");
+        assert!(sub.duration_secs >= 59.0, "sub duration = {}", sub.duration_secs);
     }
 
     #[test]
